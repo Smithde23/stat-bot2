@@ -8,6 +8,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from playwright.async_api import async_playwright
 from PIL import Image, ImageDraw, ImageFont
+from playchl_game import fetch_game_detail, game_lines as playchl_game_lines, fallback_lines as playchl_fallback_lines
 from ea_club import (fetch_matches as ea_fetch_matches,
     recent_lines as ea_recent_lines, player_lines as ea_player_lines,
     endpoint as ea_endpoint, player_summary as ea_player_summary,
@@ -1057,21 +1058,26 @@ class PlayCHLSelectView(StatMenuBase):
     async def select_game(self,interaction):
         if not await self.allowed(interaction):return
         row=self.rows[int(interaction.data["values"][0])]
-        away=first_key(row,'AWAY','AWAY TEAM','VISITOR')
-        home=first_key(row,'HOME','HOME TEAM')
-        url=row.get('GAME_URL','')
-        e=discord.Embed(
-            title=f"PlayCHL | {away} vs {home}",
-            description=(f"Date: {first_key(row,'DATE')} • {first_key(row,'TIME')}\n"
-                         f"Status: {first_key(row,'STATUS')}\n"
-                         "Source: PlayCHL official game listing.\n"
-                         "Individual game details are available on the linked PlayCHL page."),
-            color=discord.Color.blue())
-        if isinstance(url,str) and url.startswith(BASE+'/games/'):
-            e.url=url
-            e.add_field(name="Game report",value=f"[Open PlayCHL game]({url})",inline=False)
-        await interaction.response.send_message(embed=e,
-            allowed_mentions=discord.AllowedMentions.none())
+        await interaction.response.defer(thinking=True)
+        # Post real box-score fields to the Discord channel. No outbound
+        # website navigation required and no fabricated fallback statistics.
+        try:
+            async with BROWSER_LOCK:
+                async with async_playwright() as p:
+                    browser=await p.chromium.launch(headless=True,args=['--disable-dev-shm-usage'])
+                    try:
+                        detail=await asyncio.wait_for(
+                            fetch_game_detail(browser,row),timeout=65)
+                    finally:
+                        await browser.close()
+            report=playchl_game_lines(row,detail)
+        except Exception as exc:
+            log.warning("PlayCHL game detail extraction unavailable: %s",exc)
+            report=playchl_fallback_lines(row)
+        for part in chunks(report):
+            await interaction.followup.send(
+                "PLAYCHL STATS\n"+chr(96)*3+"\n"+part+chr(96)*3,
+                allowed_mentions=discord.AllowedMentions.none())
 
 class StatSourceView(StatMenuBase):
     def __init__(self,owner_id):
@@ -1084,7 +1090,7 @@ class StatSourceView(StatMenuBase):
                     description="Club 1940: match scores and EA player statistics"),
                 discord.SelectOption(
                     label="PlayCHL — league games",value="playchl",
-                    description="Official PlayCHL game listings and links")
+                    description="Official PlayCHL game statistics posted here")
             ])
         selector.callback=self.select_source
         self.add_item(selector)
@@ -1119,7 +1125,7 @@ class StatSourceView(StatMenuBase):
                 else:
                     await interaction.message.edit(
                         content=(f"**Source: PlayCHL official game listings** • {min(25,len(wsh))} recent Washington games.\n"
-                                 "Step 2: Select a matchup for its official PlayCHL game link.\n"
+                                 "Step 2: Select a matchup to post its PlayCHL game statistics directly here.\n"
                                  "PlayCHL league totals remain separate from EA private matches."),
                         view=PlayCHLSelectView(self.owner_id,wsh))
         except Exception as exc:
