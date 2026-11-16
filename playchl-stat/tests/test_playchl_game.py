@@ -50,6 +50,24 @@ class PlayCHLGameTests(unittest.TestCase):
         self.assertNotIn("G 2",lines)
         self.assertIn("not expose a readable",lines)
 
+    def test_actual_playchl_row_layout_with_team_prefix_and_goalie_dash(self):
+        payload={
+            "body":"Washington Capitals vs Minnesota Wild Game Details",
+            "tables":[
+                {"heading":"Washington Capitals Skaters",
+                 "header":["Player","Pos","G","A","P","SH"],
+                 "rows":[["44.0 Washington CapitalsBuckley0306Xbox","C","2","3","5","6"]]},
+                {"heading":"Minnesota Wild Goalies",
+                 "header":["Player","Pos","SV","SA","GA","SV%"],
+                 "rows":[["36.5 Minnesota WildGoalieOnePlayStation","—","19","23","4","0.826"]]},
+            ],
+        }
+        parsed=parse_detail(payload,"WSH","MIN")
+        self.assertEqual(len(parsed["players"]),2)
+        self.assertEqual(parsed["players"][0]["name"],"Buckley0306")
+        self.assertEqual(parsed["players"][1]["name"],"GoalieOne")
+        self.assertEqual(parsed["players"][1]["position"],"G")
+
     def test_wrong_team_section_cannot_inject_player(self):
         payload=dict(PAYLOAD)
         payload["tables"]=[{"heading":"Random Team Skaters","header":["Player","Pos","G","A","P"],
