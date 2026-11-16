@@ -922,6 +922,13 @@ async def advanced_command(interaction: discord.Interaction, player: str = '', t
         return await interaction.followup.send(
             panel.summary,view=panel,
             allowed_mentions=discord.AllowedMentions.none())
+    if player.strip() and team.strip().casefold() in ("","wsh","washington","washington capitals"):
+        listed=[p for p in cached_roster_for_dropdown()
+                if p["name"].casefold()==player.strip().casefold()]
+        if len(listed)==1 and listed[0]["status"]=="TC":
+            return await interaction.followup.send(
+                embed=roster_player_embed(listed[0]),
+                allowed_mentions=discord.AllowedMentions.none())
     try:
         rows = await expanded_stats('Advanced')
         if player:
