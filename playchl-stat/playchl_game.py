@@ -1,0 +1,156 @@
+"""Verified PlayCHL game-detail reader for direct Discord reporting.
+
+The schedule anchor is a verified /games/<ID> URL. Score numbers are shown
+in the order used by PlayCHL's "Goals" match-stat row; no home/away mapping is
+invented when the page does not explicitly label its score order.
+"""
+import logging
+import re
+from urllib.parse import urlparse
+
+log=logging.getLogger("playchl.game")
+GAME_URL=re.compile(r"^https://playchl\.com/games/[A-Za-z0-9_-]+/?$")
+TEAM_NAMES={
+    "WSH":("Washington Capitals","Washington"),
+    "ANA":("Anaheim Ducks","Anaheim"),
+    "BUF":("Buffalo Sabres","Buffalo"),
+    "CGY":("Calgary Flames","Calgary"),
+    "DET":("Detroit Red Wings","Detroit"),
+    "MIN":("Minnesota Wild","Minnesota"),
+    "SEA":("Seattle Kraken","Seattle"),
+    "SJS":("San Jose Sharks","San Jose"),
+    "UTAH":("Utah Mammoth","Utah Hockey Club","Utah"),
+    "VGK":("Vegas Golden Knights","Vegas"),
+}
+PLAYER_KEYS=("G","A","P","SH","HIT","TK","GV","BLK","PIM","SV","SA","GA","SV%")
+PREFERRED_MATCH_KEYS=("Goals","Shots","Hits","Faceoffs%","TOA","PIM","Blocks","Takeaways","Giveaways","Interceptions")
+def valid_game_url(url):
+    return isinstance(url,str) and bool(GAME_URL.fullmatch(url))
+
+def clean(text):
+    return " ".join(str(text or "").split())
+
+def team_in(heading,team):
+    heading=clean(heading).casefold()
+    return any(alias.casefold() in heading for alias in TEAM_NAMES.get(team,()))
+
+def valid_number(text):
+    return isinstance(text,str) and bool(re.fullmatch(r"-?\d+(?:\.\d+)?%?",text.strip()))
+
+def parse_detail(payload,away,home):
+    """Only display team-specific stats when a table explicitly names that club."""
+    if away not in TEAM_NAMES or home not in TEAM_NAMES or away==home:
+        raise ValueError("Invalid PlayCHL teams for a game")
+    body=clean(payload.get("body",""))
+    if not (team_in(body,away) and team_in(body,home)):
+        raise ValueError("Game detail does not name both clubs")
+    tables=payload.get("tables",[])
+    matches={}
+    people=[]
+    for table in tables:
+        heading=clean(table.get("heading"))
+        cols=[clean(x) for x in table.get("header",[])]
+        rows=table.get("rows",[])
+        if "match stats" in heading.casefold():
+            for row in rows:
+                if len(row)>=3 and clean(row[1]) in PREFERRED_MATCH_KEYS:
+                    label=clean(row[1])
+                    values=(clean(row[0]),clean(row[2]))
+                    if all(valid_number(v) for v in values):
+                        matches[label]=values
+        if not ("skaters" in heading.casefold() or "goalies" in heading.casefold()):
+            continue
+        candidates=[t for t in (away,home) if team_in(heading,t)]
+        if len(candidates)!=1:continue
+        side=candidates[0]
+        if len(cols)<4 or cols[0].casefold()!="player":continue
+        for row in rows:
+            if len(row)<len(cols):continue
+            cells=[clean(x) for x in row[-len(cols):]]
+            player=re.sub(r"^\d+(?:\.\d+)?\s*","",cells[0])
+            player=re.sub(r"\s*(?:Xbox|PlayStation)\s*$","",player,flags=re.I).strip()
+            if not player or len(player)>80:continue
+            stat=dict(zip(cols[1:],cells[1:]))
+            position=stat.get("Pos",stat.get("POS",stat.get("Position","")))
+            if position.upper() not in ("C","LW","RW","D","LD","RD","G"):
+                continue
+            numbers={k:stat[k] for k in PLAYER_KEYS if k in stat and valid_number(stat[k])}
+            # A table needs at least a meaningful hockey statistic to
+            # establish that this is a player box-score row.
+            if not numbers:continue
+            people.append({"team":side,"name":player,"position":position,"stats":numbers})
+    if not matches and not people:
+        raise ValueError("Game page exposes no recognized score or box-score tables")
+    return {"match":matches,"players":people}
+
+def game_lines(row,detail):
+    away=row.get("AWAY","");home=row.get("HOME","")
+    text=[f"PLAYCHL GAME REPORT • {away} vs {home}",
+          f"Date: {row.get('DATE') or 'Unavailable'} | {row.get('TIME') or 'Time unavailable'}",
+          f"Status: {row.get('STATUS') or 'Unconfirmed'}",
+          "Source: PlayCHL game-detail page (reported stats only)"]
+    stats=detail.get("match") or {}
+    for name in PREFERRED_MATCH_KEYS:
+        if name in stats:
+            a,b=stats[name]
+            text.append(f"{name}: {a} — {b} (PlayCHL display order)")
+    players=detail.get("players") or []
+    if players:
+        for club in (away,home):
+            team=[p for p in players if p["team"]==club]
+            if not team:continue
+            text.append("")
+            text.append(f"{club} VERIFIED PLAYER STATS")
+            for player in team[:18]:
+                fields=[f"{k} {player['stats'][k]}" for k in PLAYER_KEYS if k in player["stats"]]
+                text.append(f"{player['name']} ({player['position']}) • "+", ".join(fields))
+    else:
+        text.append("Individual player statistics were not verified on this page.")
+    return text
+
+def fallback_lines(row):
+    return [
+        f"PLAYCHL GAME • {row.get('AWAY','?')} vs {row.get('HOME','?')}",
+        f"Date: {row.get('DATE','Unavailable')} | {row.get('TIME','')}",
+        f"Status: {row.get('STATUS') or 'Unconfirmed'}",
+        "PlayCHL did not expose a readable, verified player box score for this selection.",
+        "No goals, assists, saves or scores have been estimated.",
+    ]
+
+async def fetch_game_detail(browser,row):
+    url=row.get("GAME_URL","")
+    if not valid_game_url(url):
+        raise ValueError("Only verified PlayCHL game detail URLs are supported")
+    page=await browser.new_page()
+    try:
+        response=await page.goto(url,wait_until="domcontentloaded",timeout=45000)
+        if response is None or response.status>=400:
+            raise RuntimeError("PlayCHL game page unavailable")
+        await page.wait_for_timeout(1100)
+        payload=await page.evaluate("""() => {
+          const tables=[...document.querySelectorAll('table')].map(t=>{
+            let heading='';
+            let h=t.previousElementSibling;
+            for(let i=0;i<7&&h;i++,h=h.previousElementSibling){
+              if(h.matches('h1,h2,h3,h4,h5,h6')){heading=h.innerText;break;}
+              const x=h.querySelector('h1,h2,h3,h4,h5,h6');
+              if(x){heading=x.innerText;break;}
+            }
+            if(!heading){
+              let anc=t.parentElement;
+              for(let i=0;i<5&&anc;i++,anc=anc.parentElement){
+                const hs=[...anc.querySelectorAll('h1,h2,h3,h4,h5,h6')];
+                if(hs.length===1){heading=hs[0].innerText;break;}
+              }
+            }
+            const tr=[...t.querySelectorAll('tr')];
+            let header=[...t.querySelectorAll('thead th')].map(n=>n.innerText.trim());
+            if(!header.length&&tr.length)header=[...tr[0].querySelectorAll('th')].map(n=>n.innerText.trim());
+            const rows=tr.slice(1).map(r=>[...r.querySelectorAll('th,td')].map(n=>n.innerText.trim()));
+            return {heading,header,rows};
+          });
+          return {body:document.body.innerText.slice(0,150000),tables};
+        }""")
+        return parse_detail(payload,row.get("AWAY"),row.get("HOME"))
+    finally:
+        await page.close()
