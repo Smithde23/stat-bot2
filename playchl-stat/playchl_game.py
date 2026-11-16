@@ -63,15 +63,20 @@ def parse_detail(payload,away,home):
         candidates=[t for t in (away,home) if team_in(heading,t)]
         if len(candidates)!=1:continue
         side=candidates[0]
-        if len(cols)<4 or cols[0].casefold()!="player":continue
+        if len(cols)<4 or not cols[0].casefold().startswith("player"):continue
         for row in rows:
             if len(row)<len(cols):continue
             cells=[clean(x) for x in row[-len(cols):]]
             player=re.sub(r"^\d+(?:\.\d+)?\s*","",cells[0])
+            for alias in TEAM_NAMES.get(side,()):
+                player=re.sub(r"^"+re.escape(alias)+r"\s*","",player,flags=re.I)
             player=re.sub(r"\s*(?:Xbox|PlayStation)\s*$","",player,flags=re.I).strip()
             if not player or len(player)>80:continue
             stat=dict(zip(cols[1:],cells[1:]))
             position=stat.get("Pos",stat.get("POS",stat.get("Position","")))
+            is_goalie="goalies" in heading.casefold()
+            if is_goalie and position.strip() in ("","—","-"):
+                position="G"
             if position.upper() not in ("C","LW","RW","D","LD","RD","G"):
                 continue
             numbers={k:stat[k] for k in PLAYER_KEYS if k in stat and valid_number(stat[k])}
@@ -126,21 +131,23 @@ async def fetch_game_detail(browser,row):
         response=await page.goto(url,wait_until="domcontentloaded",timeout=45000)
         if response is None or response.status>=400:
             raise RuntimeError("PlayCHL game page unavailable")
-        await page.wait_for_timeout(1100)
+        # Client-rendered game details may populate well after DOM content.
+        # Give the published box-score tables time to appear.
+        try:
+            await page.locator("table tbody tr").first.wait_for(state="attached",timeout=16000)
+        except Exception:
+            await page.wait_for_timeout(1500)
         payload=await page.evaluate("""() => {
           const tables=[...document.querySelectorAll('table')].map(t=>{
+            // Pick the LAST heading appearing before this table in document
+            // order, including headings in sibling sections and nested divs.
+            // PreviousElementSibling misses these common React layouts.
             let heading='';
-            let h=t.previousElementSibling;
-            for(let i=0;i<7&&h;i++,h=h.previousElementSibling){
-              if(h.matches('h1,h2,h3,h4,h5,h6')){heading=h.innerText;break;}
-              const x=h.querySelector('h1,h2,h3,h4,h5,h6');
-              if(x){heading=x.innerText;break;}
-            }
-            if(!heading){
-              let anc=t.parentElement;
-              for(let i=0;i<5&&anc;i++,anc=anc.parentElement){
-                const hs=[...anc.querySelectorAll('h1,h2,h3,h4,h5,h6')];
-                if(hs.length===1){heading=hs[0].innerText;break;}
+            for(const h of document.querySelectorAll('h1,h2,h3,h4,h5,h6')){
+              const rel=h.compareDocumentPosition(t);
+              if(rel & Node.DOCUMENT_POSITION_FOLLOWING){
+                const text=(h.innerText||'').trim();
+                if(text)heading=text;
               }
             }
             const tr=[...t.querySelectorAll('tr')];
@@ -151,6 +158,10 @@ async def fetch_game_detail(browser,row):
           });
           return {body:document.body.innerText.slice(0,150000),tables};
         }""")
+        log.info("PlayCHL game page %s parsed DOM: %s tables, headings=%r, body_head=%r",
+                 url,len(payload.get("tables",[])),
+                 [t.get("heading") for t in payload.get("tables",[])][:10],
+                 str(payload.get("body",""))[:200])
         return parse_detail(payload,row.get("AWAY"),row.get("HOME"))
     finally:
         await page.close()
