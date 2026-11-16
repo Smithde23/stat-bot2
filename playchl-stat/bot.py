@@ -979,13 +979,180 @@ async def ea_rankings_command(interaction:discord.Interaction,metric:app_command
         log.warning('EA rankings unavailable: %s',exc)
         await interaction.followup.send('EA private-match rankings are unavailable; PlayCHL league rankings are unchanged.',ephemeral=True)
 
+
+# Interactive source and game selection. Discord permits at most 25 choices.
+# Game objects stay server-side; users select an index instead of typing IDs.
+class StatMenuBase(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=300)
+        self.owner_id=owner_id
+
+    async def allowed(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Run /stats_menu yourself to choose a data source and game.",ephemeral=True)
+            return False
+        return True
+
+def ea_game_choices(matches):
+    choices=[]
+    for index,match in enumerate(matches[:25]):
+        when=(datetime.fromtimestamp(match['timestamp'],EASTERN).strftime('%b %d %Y')
+              if match.get('timestamp') else 'Date unknown')
+        score=(f"{match['own_goals']}-{match['opponent_goals']}"
+               if match['own_goals'] is not None and match['opponent_goals'] is not None else "Score N/A")
+        opponent=match.get('opponent','Unknown opponent')
+        choices.append(discord.SelectOption(
+            label=(f"{when} | vs {opponent}")[:100],
+            description=(f"Capitals {score} | EA private | {match['id']}")[:100],
+            value=str(index)))
+    return choices
+
+def playchl_game_choices(rows):
+    choices=[]
+    for index,row in enumerate(rows[:25]):
+        date_text=first_key(row,'DATE','GAME DATE','DAY','WHEN') or "Date unknown"
+        a=first_key(row,'AWAY','AWAY TEAM','VISITOR')
+        h=first_key(row,'HOME','HOME TEAM')
+        status=first_key(row,'STATUS') or 'Unconfirmed'
+        choices.append(discord.SelectOption(
+            label=(f"{date_text} | {a} vs {h}")[:100],
+            description=(f"PlayCHL | {status} | {first_key(row,'TIME')}")[:100],
+            value=str(index)))
+    return choices
+
+class EASelectView(StatMenuBase):
+    def __init__(self,owner_id,matches):
+        super().__init__(owner_id)
+        self.matches=matches[:25]
+        if self.matches:
+            selector=discord.ui.Select(
+                placeholder="Choose an EA match (no ID needed)",
+                min_values=1,max_values=1,
+                options=ea_game_choices(self.matches))
+            selector.callback=self.select_game
+            self.add_item(selector)
+
+    async def select_game(self,interaction):
+        if not await self.allowed(interaction):return
+        match=self.matches[int(interaction.data["values"][0])]
+        await interaction.response.defer(thinking=True)
+        lines=ea_game_report_lines(self.matches,match["id"])
+        for part in chunks(lines):
+            await interaction.followup.send(chr(96)*3+"\n"+part+chr(96)*3,
+                                            allowed_mentions=discord.AllowedMentions.none())
+
+class PlayCHLSelectView(StatMenuBase):
+    def __init__(self,owner_id,rows):
+        super().__init__(owner_id)
+        self.rows=rows[:25]
+        if self.rows:
+            selector=discord.ui.Select(
+                placeholder="Choose a PlayCHL game (no ID needed)",
+                min_values=1,max_values=1,
+                options=playchl_game_choices(self.rows))
+            selector.callback=self.select_game
+            self.add_item(selector)
+
+    async def select_game(self,interaction):
+        if not await self.allowed(interaction):return
+        row=self.rows[int(interaction.data["values"][0])]
+        away=first_key(row,'AWAY','AWAY TEAM','VISITOR')
+        home=first_key(row,'HOME','HOME TEAM')
+        url=row.get('GAME_URL','')
+        e=discord.Embed(
+            title=f"PlayCHL | {away} vs {home}",
+            description=(f"Date: {first_key(row,'DATE')} • {first_key(row,'TIME')}\n"
+                         f"Status: {first_key(row,'STATUS')}\n"
+                         "Source: PlayCHL official game listing.\n"
+                         "Individual game details are available on the linked PlayCHL page."),
+            color=discord.Color.blue())
+        if isinstance(url,str) and url.startswith(BASE+'/games/'):
+            e.url=url
+            e.add_field(name="Game report",value=f"[Open PlayCHL game]({url})",inline=False)
+        await interaction.response.send_message(embed=e,
+            allowed_mentions=discord.AllowedMentions.none())
+
+class StatSourceView(StatMenuBase):
+    def __init__(self,owner_id):
+        super().__init__(owner_id)
+        selector=discord.ui.Select(
+            placeholder="Step 1: Choose the statistics source",
+            options=[
+                discord.SelectOption(
+                    label="EA Sports NHL — club-private matches",value="ea",
+                    description="Club 1940: match scores and EA player statistics"),
+                discord.SelectOption(
+                    label="PlayCHL — league games",value="playchl",
+                    description="Official PlayCHL game listings and links")
+            ])
+        selector.callback=self.select_source
+        self.add_item(selector)
+
+    async def select_source(self,interaction):
+        if not await self.allowed(interaction):return
+        source=interaction.data["values"][0]
+        await interaction.response.defer()
+        try:
+            if source=="ea":
+                games=await asyncio.wait_for(ea_fetch_matches(),timeout=28)
+                if not games:
+                    await interaction.message.edit(
+                        content="**EA NHL (club 1940):** No private matches are available right now.",
+                        view=StatSourceView(self.owner_id))
+                else:
+                    await interaction.message.edit(
+                        content=(f"**Source: EA NHL private matches** • Showing {min(25,len(games))} most recent.\n"
+                                 "Step 2: Select a matchup below for its verified score and player box score.\n"
+                                 "Private matches are **not** PlayCHL league standings."),
+                        view=EASelectView(self.owner_id,games))
+            else:
+                rows=await asyncio.wait_for(schedule_rows(),timeout=70)
+                wsh=[r for r in rows if
+                     match_team(first_key(r,'AWAY','AWAY TEAM','VISITOR'),'WSH')
+                     or match_team(first_key(r,'HOME','HOME TEAM'),'WSH')]
+                wsh.sort(key=lambda r:game_date(r) or date.min,reverse=True)
+                if not wsh:
+                    await interaction.message.edit(
+                        content="No Washington games found in the published PlayCHL schedule.",
+                        view=StatSourceView(self.owner_id))
+                else:
+                    await interaction.message.edit(
+                        content=(f"**Source: PlayCHL official game listings** • {min(25,len(wsh))} recent Washington games.\n"
+                                 "Step 2: Select a matchup for its official PlayCHL game link.\n"
+                                 "PlayCHL league totals remain separate from EA private matches."),
+                        view=PlayCHLSelectView(self.owner_id,wsh))
+        except Exception as exc:
+            log.warning("Stat source selector failed for %s: %s",source,exc)
+            await interaction.message.edit(
+                content=(f"Unable to load {source.upper()} right now. "
+                         "The other source and your existing commands are unaffected."),
+                view=StatSourceView(self.owner_id))
+
+@bot.tree.command(name='stats_menu',description='Choose PlayCHL or EA data and select a game without typing an ID')
+async def stats_menu_command(interaction:discord.Interaction):
+    await interaction.response.send_message(
+        "**CHL Statistics & Game Browser**\n"
+        "Choose a source below, then select a game from the next dropdown.\n"
+        "EA club-private matches and official PlayCHL results are displayed separately.",
+        view=StatSourceView(interaction.user.id),
+        allowed_mentions=discord.AllowedMentions.none())
+
 @bot.tree.command(name='ea_game',description='Detailed EA private-match game report by EA match ID')
-@app_commands.describe(match_id='Exact EA match ID displayed by /ea_recent')
-async def ea_game_command(interaction:discord.Interaction,match_id:str):
+@app_commands.describe(match_id='Optional: exact EA match ID; leave blank for a game dropdown')
+async def ea_game_command(interaction:discord.Interaction,match_id:str=''):
     await interaction.response.defer(thinking=True)
     try:
         matches=await ea_fetch_matches()
-        await reply(interaction,ea_game_report_lines(matches,match_id))
+        if match_id.strip():
+            await reply(interaction,ea_game_report_lines(matches,match_id))
+        elif matches:
+            await interaction.followup.send(
+                "**EA game reports** — select a game below; no ID required.",
+                view=EASelectView(interaction.user.id,matches),
+                allowed_mentions=discord.AllowedMentions.none())
+        else:
+            await interaction.followup.send("EA has no private matches available for club 1940.")
     except Exception as exc:
         log.warning('EA match report unavailable: %s',exc)
         await interaction.followup.send('EA game history is unavailable; PlayCHL reports are unaffected.',ephemeral=True)
