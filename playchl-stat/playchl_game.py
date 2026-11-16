@@ -46,12 +46,15 @@ def parse_detail(payload,away,home):
         raise ValueError("Game detail does not name both clubs")
     tables=payload.get("tables",[])
     matches={}
+    match_order=None
     people=[]
     for table in tables:
         heading=clean(table.get("heading"))
         cols=[clean(x) for x in table.get("header",[])]
         rows=table.get("rows",[])
         if "match stats" in heading.casefold():
+            if len(cols)>=3 and {cols[0],cols[2]}=={away,home}:
+                match_order=(cols[0],cols[2])
             for row in rows:
                 if len(row)>=3 and clean(row[1]) in PREFERRED_MATCH_KEYS:
                     label=clean(row[1])
@@ -86,7 +89,7 @@ def parse_detail(payload,away,home):
             people.append({"team":side,"name":player,"position":position,"stats":numbers})
     if not matches and not people:
         raise ValueError("Game page exposes no recognized score or box-score tables")
-    return {"match":matches,"players":people}
+    return {"match":matches,"players":people,"match_order":match_order}
 
 def game_lines(row,detail):
     away=row.get("AWAY","");home=row.get("HOME","")
@@ -95,10 +98,15 @@ def game_lines(row,detail):
           f"Status: {row.get('STATUS') or 'Unconfirmed'}",
           "Source: PlayCHL game-detail page (reported stats only)"]
     stats=detail.get("match") or {}
+    order=detail.get("match_order")
+    if order and "Goals" in stats:
+        score=dict(zip(order,stats["Goals"]))
+        text.append(f"FINAL SCORE: {away} {score[away]} — {home} {score[home]}")
     for name in PREFERRED_MATCH_KEYS:
         if name in stats:
             a,b=stats[name]
-            text.append(f"{name}: {a} — {b} (PlayCHL display order)")
+            text.append(f"{name}: {order[0]} {a} — {order[1]} {b}" if order
+                        else f"{name}: {a} — {b} (PlayCHL display order)")
     players=detail.get("players") or []
     if players:
         for club in (away,home):
