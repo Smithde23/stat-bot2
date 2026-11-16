@@ -819,6 +819,15 @@ class CapitalsRosterView(discord.ui.View):
                 f"Page {self.page+1}/{self.max_page+1} — select a player below to "
                 "post their available statistics in this channel.")
 
+    @discord.ui.button(label="Refresh live roster",style=discord.ButtonStyle.primary,row=2)
+    async def refresh_roster(self,interaction:discord.Interaction,button:discord.ui.Button):
+        if not await self.check_owner(interaction):return
+        await interaction.response.defer()
+        _WSH_ROSTER_CACHE["at"]=0.0
+        entries=await washington_roster()
+        refreshed=CapitalsRosterView(self.owner_id,entries,page=0)
+        await interaction.message.edit(content=refreshed.summary,view=refreshed)
+
     async def check_owner(self,interaction):
         if interaction.user.id!=self.owner_id:
             await interaction.response.send_message(
@@ -892,15 +901,17 @@ class AdvancedStatsView(discord.ui.View):
             embed=advanced_embed(self.record, select.values[0], self.ea_summary), view=self)
 
 
+async def autocomplete_capital_players(interaction: discord.Interaction,current:str):
+    return [
+        app_commands.Choice(name=(p["name"]+(" (TC)" if p["status"]=="TC" else ""))[:100],
+                            value=p["name"][:100])
+        for p in cached_roster_for_dropdown()
+        if current.casefold() in p["name"].casefold()
+    ][:25]
+
 @bot.tree.command(name='advanced', description='Choose Capitals roster/TC players or browse published Advanced stats')
 @app_commands.describe(player='Optional player name', team='Optional team abbreviation, e.g. WSH')
-@app_commands.autocomplete(player=lambda interaction,current: [
-    app_commands.Choice(
-        name=(p["name"]+(" (TC)" if p["status"]=="TC" else ""))[:100],
-        value=p["name"][:100])
-    for p in cached_roster_for_dropdown()
-    if current.casefold() in p["name"].casefold()
-][:25])
+@app_commands.autocomplete(player=autocomplete_capital_players)
 async def advanced_command(interaction: discord.Interaction, player: str = '', team: str = ''):
     await interaction.response.defer(thinking=True)
     if not player.strip() and team.strip().casefold() in ("","wsh","washington","washington capitals"):
