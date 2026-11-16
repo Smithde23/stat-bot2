@@ -8,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from playwright.async_api import async_playwright
 from PIL import Image, ImageDraw, ImageFont
-from roster import fetch_roster as fetch_playchl_roster, TEAM_PROFILE
+from roster import fetch_roster as fetch_playchl_roster, TEAM_PROFILE, last_verified_roster
 from playchl_game import fetch_game_detail, game_lines as playchl_game_lines, fallback_lines as playchl_fallback_lines
 from ea_club import (fetch_matches as ea_fetch_matches,
     recent_lines as ea_recent_lines, player_lines as ea_player_lines,
@@ -721,23 +721,34 @@ _WSH_ROSTER_CACHE={"at":0.0,"records":None}
 _WSH_ROSTER_LOCK=asyncio.Lock()
 
 async def washington_roster():
-    """Fresh PlayCHL team-profile roster with TC participants, cached 5 min."""
+    """Fresh team-profile roster; verified snapshot on temporary source failures."""
     async with _WSH_ROSTER_LOCK:
         now=time.monotonic()
         if _WSH_ROSTER_CACHE["records"] is not None and now-_WSH_ROSTER_CACHE["at"]<300:
             return _WSH_ROSTER_CACHE["records"]
-        async with BROWSER_LOCK:
-            async with async_playwright() as p:
-                browser=await p.chromium.launch(headless=True,args=['--disable-dev-shm-usage'])
-                try:
-                    entries=await asyncio.wait_for(fetch_playchl_roster(browser),timeout=65)
-                finally:
-                    await browser.close()
-        _WSH_ROSTER_CACHE.update(at=time.monotonic(),records=entries)
-        log.info("Washington roster loaded from PlayCHL: %d regular, %d TC",
-            sum(p["status"]=="Roster" for p in entries),
-            sum(p["status"]=="TC" for p in entries))
-        return entries
+        try:
+            async with BROWSER_LOCK:
+                async with async_playwright() as p:
+                    browser=await p.chromium.launch(headless=True,args=['--disable-dev-shm-usage'])
+                    try:
+                        entries=await asyncio.wait_for(fetch_playchl_roster(browser),timeout=24)
+                    finally:
+                        await browser.close()
+            _WSH_ROSTER_CACHE.update(at=time.monotonic(),records=entries)
+            log.info("Washington LIVE roster dropdown: %d regular, %d TC",
+                sum(p["status"]=="Roster" for p in entries),
+                sum(p["status"]=="TC" for p in entries))
+            return entries
+        except Exception as exc:
+            log.warning("Live Washington roster unavailable, using dated snapshot: %s",exc)
+            entries=last_verified_roster()
+            _WSH_ROSTER_CACHE.update(at=time.monotonic(),records=entries)
+            return entries
+
+def cached_roster_for_dropdown():
+    """Menu opens without waiting for the team website; fallback is clearly dated."""
+    return _WSH_ROSTER_CACHE["records"] or last_verified_roster()
+
 
 def roster_player_embed(player):
     """Do not invent Advanced statistics for a TC or untracked roster player."""
@@ -800,7 +811,11 @@ class CapitalsRosterView(discord.ui.View):
     def summary(self):
         regular=sum(p["status"]=="Roster" for p in self.players)
         tc=sum(p["status"]=="TC" for p in self.players)
+        dated=any(p.get("snapshot") for p in self.players)
+        source=("Last verified roster (Nov 15, 2026)" if dated
+                else "Current PlayCHL roster")
         return (f"**Washington Capitals Player Picker** • {regular} roster players + {tc} TC players\n"
+                f"**Source:** {source}\n"
                 f"Page {self.page+1}/{self.max_page+1} — select a player below to "
                 "post their available statistics in this channel.")
 
@@ -879,20 +894,23 @@ class AdvancedStatsView(discord.ui.View):
 
 @bot.tree.command(name='advanced', description='Choose Capitals roster/TC players or browse published Advanced stats')
 @app_commands.describe(player='Optional player name', team='Optional team abbreviation, e.g. WSH')
+@app_commands.autocomplete(player=lambda interaction,current: [
+    app_commands.Choice(
+        name=(p["name"]+(" (TC)" if p["status"]=="TC" else ""))[:100],
+        value=p["name"][:100])
+    for p in cached_roster_for_dropdown()
+    if current.casefold() in p["name"].casefold()
+][:25])
 async def advanced_command(interaction: discord.Interaction, player: str = '', team: str = ''):
     await interaction.response.defer(thinking=True)
     if not player.strip() and team.strip().casefold() in ("","wsh","washington","washington capitals"):
-        try:
-            entries=await washington_roster()
-            panel=CapitalsRosterView(interaction.user.id,entries)
-            return await interaction.followup.send(
-                panel.summary,view=panel,
-                allowed_mentions=discord.AllowedMentions.none())
-        except Exception as exc:
-            log.warning("Washington roster selector failed: %s",exc)
-            return await interaction.followup.send(
-                "Unable to load the Washington roster and TC list right now. "
-                "Try again or supply a specific player name.",ephemeral=True)
+        entries=cached_roster_for_dropdown()
+        panel=CapitalsRosterView(interaction.user.id,entries)
+        log.info("Showing /advanced player selector: %d options incl. TC; snapshot=%s",
+                 len(entries),any(x.get("snapshot") for x in entries))
+        return await interaction.followup.send(
+            panel.summary,view=panel,
+            allowed_mentions=discord.AllowedMentions.none())
     try:
         rows = await expanded_stats('Advanced')
         if player:
@@ -924,18 +942,12 @@ async def advanced_command(interaction: discord.Interaction, player: str = '', t
 
 @bot.tree.command(name='advance',description='Open Capitals roster and TC player advanced-stat dropdown')
 async def advance_alias_command(interaction: discord.Interaction):
-    await interaction.response.defer(thinking=True)
-    try:
-        entries=await washington_roster()
-        panel=CapitalsRosterView(interaction.user.id,entries)
-        await interaction.followup.send(
-            panel.summary,view=panel,
-            allowed_mentions=discord.AllowedMentions.none())
-    except Exception as exc:
-        log.warning("Washington roster selector unavailable: %s",exc)
-        await interaction.followup.send(
-            "Unable to load the current Washington roster/TC list. Try /advanced again.",
-            ephemeral=True)
+    entries=cached_roster_for_dropdown()
+    panel=CapitalsRosterView(interaction.user.id,entries)
+    log.info("Showing /advance dropdown: %d options incl. TC",len(entries))
+    await interaction.response.send_message(
+        panel.summary,view=panel,
+        allowed_mentions=discord.AllowedMentions.none())
 
 
 @bot.tree.command(name='statsplus', description='Read CHL Stats+ for all teams or a selected player/team')
