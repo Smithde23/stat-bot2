@@ -831,7 +831,7 @@ class CapitalsRosterView(discord.ui.View):
     async def check_owner(self,interaction):
         if interaction.user.id!=self.owner_id:
             await interaction.response.send_message(
-                "Run /advanced to open your own roster menu.",ephemeral=True)
+                "Run /advance to open your own roster menu.",ephemeral=True)
             return False
         return True
 
@@ -901,7 +901,7 @@ class AdvancedStatsView(discord.ui.View):
     async def category_selected(self, interaction: discord.Interaction, select: discord.ui.Select):
         if interaction.user.id != self.owner_id:
             return await interaction.response.send_message(
-                'Run /advanced yourself to browse statistics.', ephemeral=True)
+                'Run /advance yourself to browse statistics.', ephemeral=True)
         await interaction.response.edit_message(
             embed=advanced_embed(self.record, select.values[0], self.ea_summary), view=self)
 
@@ -921,7 +921,7 @@ async def advanced_command(interaction: discord.Interaction, player: str = '', t
     if not player.strip() and team.strip().casefold() in ("","wsh","washington","washington capitals"):
         entries=cached_roster_for_dropdown()
         panel=CapitalsRosterView(interaction.user.id,entries)
-        log.info("Showing /advanced player selector: %d options incl. TC; snapshot=%s",
+        log.info("Showing /advance player selector: %d options incl. TC; snapshot=%s",
                  len(entries),any(x.get("snapshot") for x in entries))
         return await interaction.followup.send(
             panel.summary,view=panel,
@@ -956,33 +956,50 @@ async def advanced_command(interaction: discord.Interaction, player: str = '', t
             )
         if len(rows) > 5:
             await interaction.followup.send(
-                f'Showing 5 of {len(rows)} players. Use `/advanced player:` to narrow the results.',
+                f'Showing 5 of {len(rows)} players. Use `/advance player:` to narrow the results.',
                 ephemeral=True)
     except Exception as exc:
         log.exception('Advanced statistics failed')
         await interaction.followup.send(f'Unable to read advanced stats: {exc}', ephemeral=True)
 
-@bot.tree.command(name='advance',description='Capitals roster/TC dropdown or league Advanced stats')
-@app_commands.describe(player='Optional: select a Capitals roster/TC player',
+# Use native Discord choices instead of an asynchronous autocomplete callback.
+# Android sometimes continually shows the autocomplete popup in a loading state.
+# The 2026-11-15 verified roster has 23 entries (18 regular + 5 TC), within
+# Discord's native limit of 25. For any new roster entries beyond this
+# snapshot, leave player blank and use the in-message live roster picker.
+_ADVANCE_PLAYER_CHOICES=[
+    app_commands.Choice(
+        name=(p["name"]+(" (TC)" if p["status"]=="TC" else ""))[:100],
+        value=p["name"])
+    for p in last_verified_roster()
+]
+
+@bot.tree.command(name='advance',description='Choose Capitals roster or TC players and view their Advanced stats')
+@app_commands.describe(player='Optional: pick from verified roster; blank opens live roster menu',
                        team='Optional team abbreviation for league Advanced stats (default WSH)')
-@app_commands.autocomplete(player=autocomplete_capital_players)
-async def advance_alias_command(interaction: discord.Interaction, player: str = '', team: str = ''):
-    # This replaces the redundant /advanced registration. With no arguments,
-    # respond immediately with the cached roster dropdown. Team filters and
-    # named searches still run the original Advanced handler unchanged.
+@app_commands.choices(player=_ADVANCE_PLAYER_CHOICES)
+async def advance_alias_command(interaction: discord.Interaction,
+                                player: app_commands.Choice[str] | None = None,
+                                team: str = ''):
+    chosen=player.value if player is not None else ''
     if team.strip() and team.strip().casefold() not in ('wsh','washington','washington capitals'):
-        return await advanced_command(interaction,player,team)
+        return await advanced_command(interaction,chosen,team)
     entries=cached_roster_for_dropdown()
-    if player.strip():
-        matching=[p for p in entries if p['name'].casefold()==player.strip().casefold()]
+    if chosen:
+        matching=[p for p in entries if p['name'].casefold()==chosen.casefold()]
         if len(matching)==1:
             await interaction.response.defer(thinking=True)
             await send_selected_capital_player(interaction,matching[0])
             return
-        # Preserve all-team advanced searching for names not yet on the roster.
-        return await advanced_command(interaction,player,team)
+        # A roster may have changed since the last verified choices were
+        # deployed: report clearly instead of silently selecting another name.
+        return await interaction.response.send_message(
+            "That player is not on the currently loaded Washington roster. "
+            "Run /advance without choosing a player to open the full live roster menu.",
+            ephemeral=True)
     panel=CapitalsRosterView(interaction.user.id,entries)
-    log.info("Showing /advance dropdown: %d options including TC",len(entries))
+    log.info("Showing /advance stable roster dropdown: %d options, %d TC",
+             len(entries),sum(p['status']=='TC' for p in entries))
     await interaction.response.send_message(
         panel.summary,view=panel,
         allowed_mentions=discord.AllowedMentions.none())
