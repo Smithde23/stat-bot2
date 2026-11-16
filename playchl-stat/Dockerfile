@@ -9,7 +9,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && python -m playwright install --with-deps chromium
 
-COPY bot.py schedule_reader.py ea_club.py playchl_game.py ./
+COPY bot.py schedule_reader.py ea_club.py playchl_game.py roster.py ./
 COPY tests/ ./tests/
 RUN python -m unittest discover -s tests -p 'test_*.py' -v
 
