@@ -75,6 +75,17 @@ async def _inspect_playchl_example():
                         parentEnd:t.parentElement?.parentElement?.textContent?.trim().slice(-220)
                     }))""")
                     log.info('PLAYCHL_DIAGNOSTIC game table shape: %r',samples)
+                    try:
+                        parsed=await fetch_game_detail(browser,{
+                            'GAME_URL':'https://playchl.com/games/6ac2d75810075eafa0820fd6',
+                            'AWAY':'CGY','HOME':'WSH','DATE':'Nov 5',
+                            'TIME':'2:23 AM ET','STATUS':'Final'
+                        })
+                        log.info('PLAYCHL_LIVE_VERIFY success: players=%s match=%s, sides=%r',
+                            len(parsed['players']),list(parsed['match']),
+                            sorted(set(p['team'] for p in parsed['players'])))
+                    except Exception as exc:
+                        log.error('PLAYCHL_LIVE_VERIFY still failed: %s',exc)
                 finally:
                     await browser.close()
         except Exception as exc:
