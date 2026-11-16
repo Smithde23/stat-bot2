@@ -2,7 +2,8 @@
 import unittest
 from ea_club import (
     endpoint,normalize,normalize_game,recent_lines,player_lines,
-    games_in,integer
+    games_in,integer,aggregate_players,player_summary,summary_lines,
+    ranking_lines,game_report_lines
 )
 
 FIXTURE=[
@@ -64,6 +65,50 @@ class EAClubTests(unittest.TestCase):
         self.assertIsNone(record["opponent_goals"])
         self.assertEqual(record["players"],[])
         self.assertNotIn("0-0","\n".join(recent_lines([record])))
+
+    def test_supplemental_aggregation_not_season_totals(self):
+        matches=normalize(FIXTURE)
+        result=player_summary(matches,"Buckley0306")
+        self.assertEqual(result["matches"],1)
+        self.assertEqual(result["goals"],2)
+        self.assertEqual(result["assists"],3)
+        self.assertEqual(result["shots"],4)
+        self.assertIsNone(result["saves"])
+        self.assertIn("NOT added to PlayCHL season totals"," ".join(summary_lines(result)))
+
+    def test_deduplicate_matches_and_contributors(self):
+        first=normalize(FIXTURE)[0]
+        copy=dict(first,id="EA-988")
+        copy["players"]=[dict(x) for x in first["players"]]
+        combined=aggregate_players([first,first,copy])
+        # Caller is expected to feed a deduplicated EA history, just as
+        # normalize() does before production aggregation.
+        cleaned=aggregate_players(normalize(FIXTURE))
+        self.assertEqual(cleaned[0]["matches"],1)
+        self.assertEqual(len(cleaned),2)
+        self.assertEqual(combined[0]["matches"],3)
+
+    def test_exact_player_matching_rejects_partial_names(self):
+        matches=normalize(FIXTURE)
+        self.assertIsNone(player_summary(matches,"Buckley"))
+        self.assertIsNotNone(player_summary(matches,"buckley0306"))
+        altered=dict(matches[0])
+        altered["id"]="EA-999"
+        altered["players"]=[dict(matches[0]["players"][0],
+                                 id="different-ea-account")]
+        self.assertIsNone(player_summary([matches[0],altered],"Buckley0306"))
+
+    def test_rankings_and_game_report_are_source_labeled(self):
+        matches=normalize(FIXTURE)
+        rank=ranking_lines(matches,"points")
+        self.assertIn("EA CLUB-PRIVATE",rank[0])
+        self.assertTrue(any("Buckley0306" in x for x in rank))
+        self.assertIn("NOT official PlayCHL",rank[1])
+        report=game_report_lines(matches,"EA-987")
+        self.assertIn("EA PRIVATE-MATCH REPORT",report[0])
+        self.assertTrue(any("Charlielucia13" in x for x in report))
+        missing=game_report_lines(matches,"not-a-match")
+        self.assertIn("not found",missing[0])
 
     def test_reject_unknown_formats(self):
         for invalid in ({},None,"{}"):
