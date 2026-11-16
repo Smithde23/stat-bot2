@@ -121,6 +121,13 @@ class RosterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("savsman99"==x.value for x in names))
         self.assertTrue(any("(TC)" in x.name for x in names))
 
+    def test_advance_command_has_player_autocomplete(self):
+        command=next(x for x in bot.bot.tree.get_commands() if x.name=="advance")
+        self.assertIn("player",command._params)
+        self.assertFalse(command._params["player"].required)
+        self.assertIsNotNone(command._params["player"].autocomplete)
+        self.assertIn("TC",bot.CapitalsRosterView(111,parse_roster(SNAPSHOT)).summary)
+
     def test_reject_incorrect_team_or_missing_sections(self):
         with self.assertRaises(ValueError):
             parse_roster("Washington Capitals\nRoster")
