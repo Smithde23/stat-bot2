@@ -139,17 +139,15 @@ async def fetch_game_detail(browser,row):
             await page.wait_for_timeout(1500)
         payload=await page.evaluate("""() => {
           const tables=[...document.querySelectorAll('table')].map(t=>{
-            // Pick the LAST heading appearing before this table in document
-            // order, including headings in sibling sections and nested divs.
-            // PreviousElementSibling misses these common React layouts.
-            let heading='';
-            for(const h of document.querySelectorAll('h1,h2,h3,h4,h5,h6')){
-              const rel=h.compareDocumentPosition(t);
-              if(rel & Node.DOCUMENT_POSITION_FOLLOWING){
-                const text=(h.innerText||'').trim();
-                if(text)heading=text;
-              }
-            }
+            // PlayCHL's Nov 2026 game pages use ordinary text labels
+            // immediately before tables, NOT h1-h6 elements:
+            // e.g. "Calgary Flames SkatersPlayerPos..." in the wrapper.
+            // Identify the section from the closest table wrapper.
+            const previous=(t.previousElementSibling?.textContent||'').trim();
+            const container=(t.parentElement?.parentElement?.textContent||'').trim();
+            const prefix=container.slice(0,180);
+            const label=prefix.match(/(?:Washington Capitals|Calgary Flames|Minnesota Wild|Anaheim Ducks|Buffalo Sabres|Detroit Red Wings|Seattle Kraken|San Jose Sharks|Utah Mammoth|Utah Hockey Club|Vegas Golden Knights)\\s*(?:Skaters|Goalies)/i);
+            const heading=label?label[0]:(/Match Stats/i.test(previous+prefix)?"Match Stats":previous);
             const tr=[...t.querySelectorAll('tr')];
             let header=[...t.querySelectorAll('thead th')].map(n=>n.innerText.trim());
             if(!header.length&&tr.length)header=[...tr[0].querySelectorAll('th')].map(n=>n.innerText.trim());
