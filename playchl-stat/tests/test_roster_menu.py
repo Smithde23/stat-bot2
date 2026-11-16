@@ -1,7 +1,7 @@
 """Tests based on the live PlayCHL Washington team page's roster format."""
 import unittest
 import bot
-from roster import parse_roster,TEAM_PROFILE
+from roster import parse_roster,TEAM_PROFILE,last_verified_roster
 
 SNAPSHOT="""CHL
 TEAM PROFILE
@@ -66,7 +66,7 @@ foodude56
 C / LW / RW / LD / RD / G
 Continental Hockey League · EA NHL League Platform"""
 
-class RosterTests(unittest.TestCase):
+class RosterTests(unittest.IsolatedAsyncioTestCase):
     def test_parse_live_page_roster_and_tcs(self):
         records=parse_roster(SNAPSHOT)
         self.assertEqual(len(records),9)
@@ -105,6 +105,21 @@ class RosterTests(unittest.TestCase):
         self.assertIn("advance",names)
         self.assertIn("stats_menu",names)
         self.assertIn("TC players",bot.CapitalsRosterView(111,parse_roster(SNAPSHOT)).summary)
+
+    def test_menu_opens_without_live_network(self):
+        snapshot=last_verified_roster()
+        self.assertEqual(len(snapshot),23)
+        self.assertEqual(len([x for x in snapshot if x["status"]=="TC"]),5)
+        menu=bot.CapitalsRosterView(123,snapshot)
+        self.assertEqual(len(menu.children[0].options),23)
+        self.assertIn("Last verified roster",menu.summary)
+        self.assertTrue(any("Refresh live roster" in getattr(x,"label","")
+                            for x in menu.children[1:]))
+
+    async def test_slash_autocomplete_includes_tc(self):
+        names=await bot.autocomplete_capital_players(None,"savs")
+        self.assertTrue(any("savsman99"==x.value for x in names))
+        self.assertTrue(any("(TC)" in x.name for x in names))
 
     def test_reject_incorrect_team_or_missing_sections(self):
         with self.assertRaises(ValueError):
