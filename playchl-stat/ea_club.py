@@ -183,3 +183,99 @@ def player_lines(matches,query,limit=8):
             if p[key] is not None:fields.append(f"{label} {p[key]}")
         lines.append(p["name"]+" • Match "+match["id"]+" • "+", ".join(fields))
     return lines
+
+
+def aggregate_players(matches):
+    """Aggregate only the deduplicated private-match records returned by EA.
+
+    Key by both EA player ID and gamertag to avoid silently merging different
+    identities. Missing fields remain missing, never interpreted as zeros.
+    """
+    buckets={}
+    for match in matches:
+        matchid=match.get("id")
+        if not matchid:continue
+        seen=set()
+        for p in match.get("players",[]):
+            identity=(str(p.get("id") or ""),str(p.get("name") or "").strip().casefold())
+            if not identity[1] or identity in seen:continue
+            seen.add(identity)
+            if identity not in buckets:
+                buckets[identity]={
+                    "id":identity[0],"name":p["name"],"matches":0,
+                    "goals":None,"assists":None,"shots":None,"hits":None,
+                    "blocks":None,"takeaways":None,"giveaways":None,
+                    "saves":None,"shots_against":None,"latest_match":matchid
+                }
+            result=buckets[identity]
+            result["matches"]+=1
+            for stat in ("goals","assists","shots","hits","blocks","takeaways",
+                         "giveaways","saves","shots_against"):
+                value=p.get(stat)
+                if value is not None:
+                    result[stat]=(result[stat] or 0)+value
+    return sorted(buckets.values(),key=lambda p:(-(p["goals"] or 0)-(p["assists"] or 0),
+                                                -p["matches"],p["name"].casefold()))
+
+def player_summary(matches,name):
+    """Return one precisely matched gamertag; reject ambiguous EA identities."""
+    query=str(name).strip().casefold()
+    if not query:return None
+    entries=[p for p in aggregate_players(matches) if p["name"].casefold()==query]
+    if len(entries)!=1:return None
+    return entries[0]
+
+def summary_lines(p):
+    if not p:return []
+    stats=[]
+    for label,key in (("G","goals"),("A","assists"),("SH","shots"),
+                      ("HIT","hits"),("BLK","blocks"),("TK","takeaways"),
+                      ("GV","giveaways"),("SV","saves"),("SA","shots_against")):
+        if p.get(key) is not None:stats.append(f"{label} {p[key]}")
+    return [
+        f"EA PRIVATE MATCHES • CLUB {CLUB_ID} • {p['matches']} recorded matches in fetched history",
+        " | ".join(stats) if stats else "No numeric player statistics exposed by EA",
+        "NOT added to PlayCHL season totals; fetched history may be incomplete."
+    ]
+
+def ranking_lines(matches,metric="points",limit=10):
+    if metric not in ("points","goals","assists","shots","saves"):
+        raise ValueError("Unsupported EA ranking metric")
+    scored=[]
+    for p in aggregate_players(matches):
+        if metric=="points":
+            if p["goals"] is None or p["assists"] is None:continue
+            score=p["goals"]+p["assists"]
+        else:
+            score=p[metric]
+            if score is None:continue
+        scored.append((score,p))
+    scored.sort(key=lambda item:(-item[0],-item[1]["matches"],item[1]["name"].casefold()))
+    lines=[f"EA CLUB-PRIVATE {metric.upper()} LEADERS • CLUB {CLUB_ID}",
+           "Verified EA history only; NOT official PlayCHL league standings or awards."]
+    if not scored:return lines+["No players with verified data for this category."]
+    for rank,(value,p) in enumerate(scored[:limit],1):
+        lines.append(f"#{rank} {p['name']} — {value} {metric} across {p['matches']} listed match(es)")
+    return lines
+
+def game_report_lines(matches,match_id):
+    match_id=str(match_id).strip()
+    found=[x for x in matches if x["id"]==match_id]
+    if len(found)!=1:return ["EA match ID not found in fetched club-private history."]
+    g=found[0]
+    score=(f"{g['own_goals']}–{g['opponent_goals']}" if
+           g["own_goals"] is not None and g["opponent_goals"] is not None
+           else "score not available")
+    date=(dt.datetime.fromtimestamp(g["timestamp"],dt.timezone.utc).strftime("%b %d, %Y %H:%M UTC")
+          if g.get("timestamp") else "date not available")
+    lines=[f"EA PRIVATE-MATCH REPORT • {g['id']}",
+           f"{g['club']} vs {g['opponent']} • {score} • {date}",
+           "Supplementary EA source; no league-game match is presumed."]
+    if not g["players"]:return lines+["Player statistics not available for this match."]
+    for p in g["players"][:20]:
+        stat=[]
+        for title,key in (("G","goals"),("A","assists"),("SH","shots"),("SV","saves"),
+                          ("HIT","hits"),("BLK","blocks")):
+            if p[key] is not None:stat.append(f"{title} {p[key]}")
+        lines.append(p["name"]+" — "+(", ".join(stat) if stat else "stats unavailable"))
+    return lines
