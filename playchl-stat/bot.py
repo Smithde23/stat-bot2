@@ -881,7 +881,7 @@ class AdvancedStatsView(discord.ui.View):
 @app_commands.describe(player='Optional player name', team='Optional team abbreviation, e.g. WSH')
 async def advanced_command(interaction: discord.Interaction, player: str = '', team: str = ''):
     await interaction.response.defer(thinking=True)
-    if not player.strip() and (not team.strip() or resolve_team(team)=="WSH"):
+    if not player.strip() and team.strip().casefold() in ("","wsh","washington","washington capitals"):
         try:
             entries=await washington_roster()
             panel=CapitalsRosterView(interaction.user.id,entries)
@@ -921,6 +921,11 @@ async def advanced_command(interaction: discord.Interaction, player: str = '', t
     except Exception as exc:
         log.exception('Advanced statistics failed')
         await interaction.followup.send(f'Unable to read advanced stats: {exc}', ephemeral=True)
+
+@bot.tree.command(name='advance',description='Open Capitals roster and TC player advanced-stat dropdown')
+async def advance_alias_command(interaction: discord.Interaction):
+    await advanced_command(interaction)
+
 
 @bot.tree.command(name='statsplus', description='Read CHL Stats+ for all teams or a selected player/team')
 @app_commands.describe(player='Optional player name', team='Optional team abbreviation, e.g. WSH')
