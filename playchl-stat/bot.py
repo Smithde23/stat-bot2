@@ -55,6 +55,43 @@ async def page_tables(path, tab=None):
             finally:
                 await browser.close()
 
+async def _inspect_wsh_roster_page():
+    await asyncio.sleep(3)
+    async with BROWSER_LOCK:
+        try:
+            async with async_playwright() as playwright:
+                browser=await playwright.chromium.launch(headless=True,args=['--disable-dev-shm-usage'])
+                try:
+                    page=await browser.new_page()
+                    await page.goto(BASE+'/teams',wait_until='domcontentloaded',timeout=45000)
+                    await page.wait_for_timeout(1000)
+                    teams=await page.evaluate("""() => [...document.querySelectorAll('a[href]')]
+                         .filter(a=>(a.innerText||'').toLowerCase().includes('washington') ||
+                                    (a.getAttribute('href')||'').includes('capitals'))
+                         .map(a=>({href:a.href,text:a.innerText.trim().slice(0,200)})).slice(0,12)""")
+                    log.info('ROSTER_DIAG teams links: %r',teams)
+                    for entry in teams[:2]:
+                        if not entry["href"].startswith(BASE+'/teams/'):continue
+                        await page.goto(entry['href'],wait_until='domcontentloaded',timeout=45000)
+                        await page.wait_for_timeout(1700)
+                        data=await page.evaluate("""() => ({
+                            title:document.title,
+                            body:document.body.innerText.slice(0,7000),
+                            tables:[...document.querySelectorAll('table')].map(t=>({
+                                head:[...t.querySelectorAll('th')].slice(0,20).map(x=>x.innerText.trim()),
+                                rows:[...t.querySelectorAll('tr')].slice(0,4).map(r=>r.innerText.slice(0,160))
+                            })),
+                            links:[...document.querySelectorAll('a[href]')]
+                                .filter(a=>/roster|player|team/i.test((a.innerText||'')+(a.getAttribute('href')||'')))
+                                .slice(0,20).map(a=>({text:a.innerText.slice(0,80),href:a.getAttribute('href')}))
+                        })""")
+                        log.info('ROSTER_DIAG team page: %r',data)
+                        break
+                finally:
+                    await browser.close()
+        except Exception as exc:
+            log.warning('ROSTER_DIAG unavailable: %s',exc)
+
 def pick_tables(tables, required):
     found = []
     for t in tables:
@@ -193,6 +230,7 @@ class CHLBot(commands.Bot):
         auto_update.start()
         daily_schedule.start()
         daily_awards.start()
+        asyncio.create_task(_inspect_wsh_roster_page())
 
 
 bot=CHLBot(command_prefix='!', intents=discord.Intents.default())
