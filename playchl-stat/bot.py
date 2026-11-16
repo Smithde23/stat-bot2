@@ -853,28 +853,33 @@ class CapitalsRosterView(discord.ui.View):
             return await interaction.response.send_message("Invalid roster selection.",ephemeral=True)
         selected=self.players[idx]
         await interaction.response.defer(thinking=True)
-        try:
-            allrows=await expanded_stats("Advanced")
-            matching=[record for record in allrows
-                      if value(record,"PLAYER","NAME","GAMERTAG").casefold()==selected["name"].casefold()
-                      and match_team(value(record,"TEAM"),"WSH")]
-            # Never silently choose from several matching identities.
-            if len(matching)==1:
-                record=matching[0]
-                ea_history=await optional_ea_history()
-                ea=ea_for_record(record,ea_history)
-                embed,graphic=await chel_card_payload(record,ea_summary=ea)
-                await interaction.followup.send(
-                    embed=embed,file=graphic,
-                    view=AdvancedStatsView(record,interaction.user.id,ea_summary=ea),
-                    allowed_mentions=discord.AllowedMentions.none())
-                return
-            if len(matching)>1:
-                log.warning("Duplicate PlayCHL Advanced names for roster player %s",selected["name"])
-        except Exception as exc:
-            log.warning("Advanced lookup for roster player unavailable: %s",exc)
-        await interaction.followup.send(embed=roster_player_embed(selected),
-                                        allowed_mentions=discord.AllowedMentions.none())
+        await send_selected_capital_player(interaction,selected)
+
+
+async def send_selected_capital_player(interaction,selected):
+    """Posts the selected player card, whether selected before or after /advance."""
+    try:
+        allrows=await expanded_stats("Advanced")
+        matching=[record for record in allrows
+                  if value(record,"PLAYER","NAME","GAMERTAG").casefold()==selected["name"].casefold()
+                  and match_team(value(record,"TEAM"),"WSH")]
+        if len(matching)==1:
+            record=matching[0]
+            ea_history=await optional_ea_history()
+            ea=ea_for_record(record,ea_history)
+            embed,graphic=await chel_card_payload(record,ea_summary=ea)
+            await interaction.followup.send(
+                embed=embed,file=graphic,
+                view=AdvancedStatsView(record,interaction.user.id,ea_summary=ea),
+                allowed_mentions=discord.AllowedMentions.none())
+            return
+        if len(matching)>1:
+            log.warning("Duplicate advanced record names for Washington roster player %s",selected["name"])
+    except Exception as exc:
+        log.warning("Advanced lookup unavailable for Washington roster player %s: %s",
+                    selected["name"],exc)
+    await interaction.followup.send(embed=roster_player_embed(selected),
+                                    allowed_mentions=discord.AllowedMentions.none())
 
 class AdvancedStatsView(discord.ui.View):
     def __init__(self, record, owner_id, ea_summary=None):
@@ -958,9 +963,20 @@ async def advanced_command(interaction: discord.Interaction, player: str = '', t
         log.exception('Advanced statistics failed')
         await interaction.followup.send(f'Unable to read advanced stats: {exc}', ephemeral=True)
 
-@bot.tree.command(name='advance',description='Open Capitals roster and TC player advanced-stat dropdown')
-async def advance_alias_command(interaction: discord.Interaction):
+@bot.tree.command(name='advance',description='Choose a Washington roster or TC player for Advanced stats')
+@app_commands.describe(player='Optional: select a Capitals roster or TC player')
+@app_commands.autocomplete(player=autocomplete_capital_players)
+async def advance_alias_command(interaction: discord.Interaction, player: str = ''):
     entries=cached_roster_for_dropdown()
+    if player.strip():
+        matching=[p for p in entries if p['name'].casefold()==player.strip().casefold()]
+        if len(matching)!=1:
+            return await interaction.response.send_message(
+                "Player not found on the Washington roster. Leave player blank to use the full dropdown.",
+                ephemeral=True)
+        await interaction.response.defer(thinking=True)
+        await send_selected_capital_player(interaction,matching[0])
+        return
     panel=CapitalsRosterView(interaction.user.id,entries)
     log.info("Showing /advance dropdown: %d options incl. TC",len(entries))
     await interaction.response.send_message(
