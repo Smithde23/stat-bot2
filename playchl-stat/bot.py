@@ -924,7 +924,18 @@ async def advanced_command(interaction: discord.Interaction, player: str = '', t
 
 @bot.tree.command(name='advance',description='Open Capitals roster and TC player advanced-stat dropdown')
 async def advance_alias_command(interaction: discord.Interaction):
-    await advanced_command(interaction)
+    await interaction.response.defer(thinking=True)
+    try:
+        entries=await washington_roster()
+        panel=CapitalsRosterView(interaction.user.id,entries)
+        await interaction.followup.send(
+            panel.summary,view=panel,
+            allowed_mentions=discord.AllowedMentions.none())
+    except Exception as exc:
+        log.warning("Washington roster selector unavailable: %s",exc)
+        await interaction.followup.send(
+            "Unable to load the current Washington roster/TC list. Try /advanced again.",
+            ephemeral=True)
 
 
 @bot.tree.command(name='statsplus', description='Read CHL Stats+ for all teams or a selected player/team')
