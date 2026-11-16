@@ -8,6 +8,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from playwright.async_api import async_playwright
 from PIL import Image, ImageDraw, ImageFont
+from ea_club import fetch_matches as ea_fetch_matches, recent_lines as ea_recent_lines, player_lines as ea_player_lines, endpoint as ea_endpoint
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN', '')
@@ -870,6 +871,39 @@ async def daily_awards():
 @daily_awards.before_loop
 async def before_daily_awards():
     await bot.wait_until_ready()
+
+
+# EA NHL club-private match API: supplemental source only. PlayCHL league
+# standings and league season statistics remain authoritative for this bot.
+@bot.tree.command(name='ea_recent',description='Recent EA NHL private club matches for Capitals club 1940')
+@app_commands.describe(limit='Number of EA matches to display (1–10)')
+async def ea_recent_command(interaction:discord.Interaction,limit:app_commands.Range[int,1,10]=5):
+    await interaction.response.defer(thinking=True)
+    try:
+        matches=await ea_fetch_matches()
+        await reply(interaction,ea_recent_lines(matches,limit))
+    except Exception as exc:
+        log.warning("EA supplemental private-match history unavailable: %s",exc)
+        await interaction.followup.send(
+            "EA private-match history is currently unavailable. "
+            "Your PlayCHL league stats remain available. "
+            f"Source: {ea_endpoint()}",
+            ephemeral=True)
+
+@bot.tree.command(name='ea_player',description='EA private club match player stats (separate from CHL season totals)')
+@app_commands.describe(name='Player gamertag or part of it')
+async def ea_player_command(interaction:discord.Interaction,name:str):
+    await interaction.response.defer(thinking=True)
+    try:
+        matches=await ea_fetch_matches()
+        await reply(interaction,ea_player_lines(matches,name))
+    except ValueError as exc:
+        await interaction.followup.send(str(exc),ephemeral=True)
+    except Exception as exc:
+        log.warning("EA player match source unavailable: %s",exc)
+        await interaction.followup.send(
+            "EA private-match player data is temporarily unavailable. "
+            "Use /player for published PlayCHL league totals.",ephemeral=True)
 
 if __name__=='__main__':
     if not TOKEN: raise SystemExit('Set DISCORD_TOKEN in .env before running')
