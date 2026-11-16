@@ -55,42 +55,6 @@ async def page_tables(path, tab=None):
             finally:
                 await browser.close()
 
-async def _inspect_playchl_example():
-    await asyncio.sleep(4)
-    async with BROWSER_LOCK:
-        try:
-            async with async_playwright() as playwright:
-                browser=await playwright.chromium.launch(headless=True,args=['--disable-dev-shm-usage'])
-                try:
-                    page=await browser.new_page()
-                    await page.goto('https://playchl.com/games/6ac2d75810075eafa0820fd6',
-                                    wait_until='domcontentloaded',timeout=40000)
-                    await page.wait_for_timeout(2400)
-                    samples=await page.evaluate("""() => [...document.querySelectorAll('table')].map((t,i)=>({
-                        i,
-                        headers:[...t.querySelectorAll('thead th')].map(e=>e.textContent.trim()).slice(0,22),
-                        firstRows:[...t.querySelectorAll('tr')].slice(0,2).map(r=>[...r.querySelectorAll('td,th')].map(e=>e.textContent.trim()).slice(0,16)),
-                        previous:t.previousElementSibling?.textContent?.trim().slice(-200),
-                        parentStart:t.parentElement?.parentElement?.textContent?.trim().slice(0,220),
-                        parentEnd:t.parentElement?.parentElement?.textContent?.trim().slice(-220)
-                    }))""")
-                    log.info('PLAYCHL_DIAGNOSTIC game table shape: %r',samples)
-                    try:
-                        parsed=await fetch_game_detail(browser,{
-                            'GAME_URL':'https://playchl.com/games/6ac2d75810075eafa0820fd6',
-                            'AWAY':'CGY','HOME':'WSH','DATE':'Nov 5',
-                            'TIME':'2:23 AM ET','STATUS':'Final'
-                        })
-                        log.info('PLAYCHL_LIVE_VERIFY success: players=%s match=%s, sides=%r',
-                            len(parsed['players']),list(parsed['match']),
-                            sorted(set(p['team'] for p in parsed['players'])))
-                    except Exception as exc:
-                        log.error('PLAYCHL_LIVE_VERIFY still failed: %s',exc)
-                finally:
-                    await browser.close()
-        except Exception as exc:
-            log.warning('PLAYCHL_DIAGNOSTIC failed: %s',exc)
-
 def pick_tables(tables, required):
     found = []
     for t in tables:
@@ -229,7 +193,7 @@ class CHLBot(commands.Bot):
         auto_update.start()
         daily_schedule.start()
         daily_awards.start()
-        asyncio.create_task(_inspect_playchl_example())
+
 
 bot=CHLBot(command_prefix='!', intents=discord.Intents.default())
 
