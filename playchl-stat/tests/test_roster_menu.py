@@ -102,6 +102,7 @@ class RosterTests(unittest.TestCase):
     def test_advanced_command_persists_and_picker_uses_current_source(self):
         names={x.name for x in bot.bot.tree.get_commands()}
         self.assertIn("advanced",names)
+        self.assertIn("advance",names)
         self.assertIn("stats_menu",names)
         self.assertIn("TC players",bot.CapitalsRosterView(111,parse_roster(SNAPSHOT)).summary)
 
