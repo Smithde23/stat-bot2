@@ -99,11 +99,13 @@ class RosterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(next(x for x in nextpage.children if hasattr(x,"options")).options[0].value,"25")
         self.assertTrue(any("TC" in x.description for x in next(x for x in nextpage.children if hasattr(x,"options")).options))
 
-    def test_advanced_command_persists_and_picker_uses_current_source(self):
-        names={x.name for x in bot.bot.tree.get_commands()}
-        self.assertIn("advanced",names)
+    def test_only_one_advanced_command_and_picker_uses_current_source(self):
+        commands=bot.bot.tree.get_commands()
+        names=[x.name for x in commands]
+        self.assertNotIn("advanced",names)
         self.assertIn("advance",names)
         self.assertIn("stats_menu",names)
+        self.assertEqual(len(names),len(set(names)), "Duplicate slash commands")
         self.assertIn("TC players",bot.CapitalsRosterView(111,parse_roster(SNAPSHOT)).summary)
 
     def test_menu_opens_without_live_network(self):
