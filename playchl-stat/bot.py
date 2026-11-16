@@ -914,9 +914,8 @@ async def autocomplete_capital_players(interaction: discord.Interaction,current:
         if current.casefold() in p["name"].casefold()
     ][:25]
 
-@bot.tree.command(name='advanced', description='Choose Capitals roster/TC players or browse published Advanced stats')
-@app_commands.describe(player='Optional player name', team='Optional team abbreviation, e.g. WSH')
-@app_commands.autocomplete(player=autocomplete_capital_players)
+# Shared handler for the single canonical /advance slash command.
+# Do not register /advanced as a separate Discord command.
 async def advanced_command(interaction: discord.Interaction, player: str = '', team: str = ''):
     await interaction.response.defer(thinking=True)
     if not player.strip() and team.strip().casefold() in ("","wsh","washington","washington capitals"):
@@ -963,22 +962,27 @@ async def advanced_command(interaction: discord.Interaction, player: str = '', t
         log.exception('Advanced statistics failed')
         await interaction.followup.send(f'Unable to read advanced stats: {exc}', ephemeral=True)
 
-@bot.tree.command(name='advance',description='Choose a Washington roster or TC player for Advanced stats')
-@app_commands.describe(player='Optional: select a Capitals roster or TC player')
+@bot.tree.command(name='advance',description='Capitals roster/TC dropdown or league Advanced stats')
+@app_commands.describe(player='Optional: select a Capitals roster/TC player',
+                       team='Optional team abbreviation for league Advanced stats (default WSH)')
 @app_commands.autocomplete(player=autocomplete_capital_players)
-async def advance_alias_command(interaction: discord.Interaction, player: str = ''):
+async def advance_alias_command(interaction: discord.Interaction, player: str = '', team: str = ''):
+    # This replaces the redundant /advanced registration. With no arguments,
+    # respond immediately with the cached roster dropdown. Team filters and
+    # named searches still run the original Advanced handler unchanged.
+    if team.strip() and team.strip().casefold() not in ('wsh','washington','washington capitals'):
+        return await advanced_command(interaction,player,team)
     entries=cached_roster_for_dropdown()
     if player.strip():
         matching=[p for p in entries if p['name'].casefold()==player.strip().casefold()]
-        if len(matching)!=1:
-            return await interaction.response.send_message(
-                "Player not found on the Washington roster. Leave player blank to use the full dropdown.",
-                ephemeral=True)
-        await interaction.response.defer(thinking=True)
-        await send_selected_capital_player(interaction,matching[0])
-        return
+        if len(matching)==1:
+            await interaction.response.defer(thinking=True)
+            await send_selected_capital_player(interaction,matching[0])
+            return
+        # Preserve all-team advanced searching for names not yet on the roster.
+        return await advanced_command(interaction,player,team)
     panel=CapitalsRosterView(interaction.user.id,entries)
-    log.info("Showing /advance dropdown: %d options incl. TC",len(entries))
+    log.info("Showing /advance dropdown: %d options including TC",len(entries))
     await interaction.response.send_message(
         panel.summary,view=panel,
         allowed_mentions=discord.AllowedMentions.none())
