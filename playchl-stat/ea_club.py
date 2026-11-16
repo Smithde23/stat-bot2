@@ -108,7 +108,13 @@ def normalize(response):
     result={}
     for item in games_in(response):
         match=normalize_game(item)
-        if match:result[match["id"]]=match
+        if match:
+            previous=result.get(match["id"])
+            # The same match may appear twice with different detail levels.
+            # Keep the richer verified record, never overwrite it with a stub.
+            richness=lambda m:len(m["players"])*2+int(m["own_goals"] is not None)+int(m["opponent_goals"] is not None)
+            if previous is None or richness(match)>richness(previous):
+                result[match["id"]]=match
     return sorted(result.values(),key=lambda x:(x["timestamp"] or 0,x["id"]),reverse=True)
 
 async def fetch_matches(force=False):
