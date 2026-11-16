@@ -70,6 +70,13 @@ async def _inspect_wsh_roster_page():
                                     (a.getAttribute('href')||'').includes('capitals'))
                          .map(a=>({href:a.href,text:a.innerText.trim().slice(0,200)})).slice(0,12)""")
                     log.info('ROSTER_DIAG teams links: %r',teams)
+                    inspect=await page.evaluate("""() => ({
+                        title:document.title,
+                        body:document.body.innerText.slice(0,1800),
+                        links:[...document.querySelectorAll('a[href]')].slice(0,70)
+                          .map(a=>({href:a.getAttribute('href'),text:a.innerText.slice(0,90)}))
+                    })""")
+                    log.info('ROSTER_DIAG teams shape: %r',inspect)
                     for entry in teams[:2]:
                         if not entry["href"].startswith(BASE+'/teams/'):continue
                         await page.goto(entry['href'],wait_until='domcontentloaded',timeout=45000)
