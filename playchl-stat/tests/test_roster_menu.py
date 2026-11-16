@@ -97,7 +97,7 @@ class RosterTests(unittest.IsolatedAsyncioTestCase):
         nextpage=bot.CapitalsRosterView(111,extended,page=1)
         self.assertEqual(len(next(x for x in nextpage.children if hasattr(x,"options")).options),20)
         self.assertEqual(next(x for x in nextpage.children if hasattr(x,"options")).options[0].value,"25")
-        self.assertTrue(any("TC" in x.description for x in nextpage.children[0].options))
+        self.assertTrue(any("TC" in x.description for x in next(x for x in nextpage.children if hasattr(x,"options")).options))
 
     def test_advanced_command_persists_and_picker_uses_current_source(self):
         names={x.name for x in bot.bot.tree.get_commands()}
