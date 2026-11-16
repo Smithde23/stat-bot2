@@ -1,4 +1,4 @@
-import os, asyncio, logging, re, io
+import os, asyncio, logging, re, io, time
 from datetime import datetime, timezone, date, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -8,6 +8,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from playwright.async_api import async_playwright
 from PIL import Image, ImageDraw, ImageFont
+from roster import fetch_roster as fetch_playchl_roster, TEAM_PROFILE
 from playchl_game import fetch_game_detail, game_lines as playchl_game_lines, fallback_lines as playchl_fallback_lines
 from ea_club import (fetch_matches as ea_fetch_matches,
     recent_lines as ea_recent_lines, player_lines as ea_player_lines,
@@ -54,50 +55,6 @@ async def page_tables(path, tab=None):
                 }))""")
             finally:
                 await browser.close()
-
-async def _inspect_wsh_roster_page():
-    await asyncio.sleep(3)
-    async with BROWSER_LOCK:
-        try:
-            async with async_playwright() as playwright:
-                browser=await playwright.chromium.launch(headless=True,args=['--disable-dev-shm-usage'])
-                try:
-                    page=await browser.new_page()
-                    await page.goto(BASE+'/teams',wait_until='domcontentloaded',timeout=45000)
-                    await page.wait_for_timeout(1000)
-                    teams=await page.evaluate("""() => [...document.querySelectorAll('a[href]')]
-                         .filter(a=>(a.innerText||'').toLowerCase().includes('washington') ||
-                                    (a.getAttribute('href')||'').includes('capitals'))
-                         .map(a=>({href:a.href,text:a.innerText.trim().slice(0,200)})).slice(0,12)""")
-                    log.info('ROSTER_DIAG teams links: %r',teams)
-                    inspect=await page.evaluate("""() => ({
-                        title:document.title,
-                        body:document.body.innerText.slice(0,1800),
-                        links:[...document.querySelectorAll('a[href]')].slice(0,70)
-                          .map(a=>({href:a.getAttribute('href'),text:a.innerText.slice(0,90)}))
-                    })""")
-                    log.info('ROSTER_DIAG teams shape: %r',inspect)
-                    for entry in teams[:2]:
-                        if not entry["href"].startswith(BASE+'/teams/'):continue
-                        await page.goto(entry['href'],wait_until='domcontentloaded',timeout=45000)
-                        await page.wait_for_timeout(1700)
-                        data=await page.evaluate("""() => ({
-                            title:document.title,
-                            body:document.body.innerText.slice(0,7000),
-                            tables:[...document.querySelectorAll('table')].map(t=>({
-                                head:[...t.querySelectorAll('th')].slice(0,20).map(x=>x.innerText.trim()),
-                                rows:[...t.querySelectorAll('tr')].slice(0,4).map(r=>r.innerText.slice(0,160))
-                            })),
-                            links:[...document.querySelectorAll('a[href]')]
-                                .filter(a=>/roster|player|team/i.test((a.innerText||'')+(a.getAttribute('href')||'')))
-                                .slice(0,20).map(a=>({text:a.innerText.slice(0,80),href:a.getAttribute('href')}))
-                        })""")
-                        log.info('ROSTER_DIAG team page: %r',data)
-                        break
-                finally:
-                    await browser.close()
-        except Exception as exc:
-            log.warning('ROSTER_DIAG unavailable: %s',exc)
 
 def pick_tables(tables, required):
     found = []
@@ -237,7 +194,7 @@ class CHLBot(commands.Bot):
         auto_update.start()
         daily_schedule.start()
         daily_awards.start()
-        asyncio.create_task(_inspect_wsh_roster_page())
+
 
 
 bot=CHLBot(command_prefix='!', intents=discord.Intents.default())
@@ -759,6 +716,142 @@ async def chel_card_payload(record, section='overview', ea_summary=None):
     embed.set_image(url='attachment://chel_player_card.png')
     return embed, discord.File(png, filename='chel_player_card.png')
 
+
+_WSH_ROSTER_CACHE={"at":0.0,"records":None}
+_WSH_ROSTER_LOCK=asyncio.Lock()
+
+async def washington_roster():
+    """Fresh PlayCHL team-profile roster with TC participants, cached 5 min."""
+    async with _WSH_ROSTER_LOCK:
+        now=time.monotonic()
+        if _WSH_ROSTER_CACHE["records"] is not None and now-_WSH_ROSTER_CACHE["at"]<300:
+            return _WSH_ROSTER_CACHE["records"]
+        async with BROWSER_LOCK:
+            async with async_playwright() as p:
+                browser=await p.chromium.launch(headless=True,args=['--disable-dev-shm-usage'])
+                try:
+                    entries=await asyncio.wait_for(fetch_playchl_roster(browser),timeout=65)
+                finally:
+                    await browser.close()
+        _WSH_ROSTER_CACHE.update(at=time.monotonic(),records=entries)
+        log.info("Washington roster loaded from PlayCHL: %d regular, %d TC",
+            sum(p["status"]=="Roster" for p in entries),
+            sum(p["status"]=="TC" for p in entries))
+        return entries
+
+def roster_player_embed(player):
+    """Do not invent Advanced statistics for a TC or untracked roster player."""
+    name=player["name"]
+    is_tc=player["status"]=="TC"
+    embed=discord.Embed(
+        title=f"🏒 {name} — Washington Capitals",
+        description=("**Status: Training Camp (TC)**\n"
+                     "This player is listed under TC PLAYERS on PlayCHL."
+                     if is_tc else "**Status: Washington Capitals roster**"),
+        color=discord.Color.from_rgb(194,32,68),
+        url=TEAM_PROFILE)
+    if player.get("position"):
+        embed.add_field(name="Position",value=player["position"])
+    if player.get("stats"):
+        labels={"GP":"Games","G":"Goals","A":"Assists","PTS":"Points",
+                "SH":"Shots","HIT":"Hits"}
+        values=[f"**{labels.get(k,k)}** {v}" for k,v in player["stats"].items()]
+        embed.add_field(name="PlayCHL roster statistics",
+                        value="\n".join(values)[:1024],inline=False)
+    embed.add_field(name="Advanced stats",
+                    value="No matching published PlayCHL Advanced row was found for this player. "
+                          "Roster membership does not imply recorded advanced statistics.",
+                    inline=False)
+    embed.set_footer(text="Source: current PlayCHL team profile · TC players included")
+    return embed
+
+class CapitalsRosterView(discord.ui.View):
+    PAGE_SIZE=25
+
+    def __init__(self,owner_id,players,page=0):
+        super().__init__(timeout=300)
+        self.owner_id=owner_id
+        self.players=players
+        self.max_page=max(0,(len(players)-1)//self.PAGE_SIZE)
+        self.page=max(0,min(page,self.max_page))
+        start=self.page*self.PAGE_SIZE
+        options=[]
+        for i in range(start,min(start+self.PAGE_SIZE,len(players))):
+            p=players[i]
+            description=("TC • Training Camp" if p["status"]=="TC"
+                         else "Roster • "+("GP "+p["stats"]["GP"] if p["stats"].get("GP") else "listed"))
+            options.append(discord.SelectOption(
+                label=p["name"][:100],description=description[:100],value=str(i)))
+        select=discord.ui.Select(placeholder="Choose a Capitals roster or TC player",
+            options=options,min_values=1,max_values=1)
+        select.callback=self.select_player
+        self.add_item(select)
+        if self.max_page:
+            previous=discord.ui.Button(label="Previous 25",style=discord.ButtonStyle.secondary,
+                                        disabled=self.page==0)
+            upcoming=discord.ui.Button(label="Next 25",style=discord.ButtonStyle.secondary,
+                                        disabled=self.page>=self.max_page)
+            previous.callback=self.previous_page
+            upcoming.callback=self.next_page
+            self.add_item(previous)
+            self.add_item(upcoming)
+
+    @property
+    def summary(self):
+        regular=sum(p["status"]=="Roster" for p in self.players)
+        tc=sum(p["status"]=="TC" for p in self.players)
+        return (f"**Washington Capitals Player Picker** • {regular} roster players + {tc} TC players\n"
+                f"Page {self.page+1}/{self.max_page+1} — select a player below to "
+                "post their available statistics in this channel.")
+
+    async def check_owner(self,interaction):
+        if interaction.user.id!=self.owner_id:
+            await interaction.response.send_message(
+                "Run /advanced to open your own roster menu.",ephemeral=True)
+            return False
+        return True
+
+    async def previous_page(self,interaction):
+        if not await self.check_owner(interaction):return
+        new=CapitalsRosterView(self.owner_id,self.players,self.page-1)
+        await interaction.response.edit_message(content=new.summary,view=new)
+
+    async def next_page(self,interaction):
+        if not await self.check_owner(interaction):return
+        new=CapitalsRosterView(self.owner_id,self.players,self.page+1)
+        await interaction.response.edit_message(content=new.summary,view=new)
+
+    async def select_player(self,interaction):
+        if not await self.check_owner(interaction):return
+        selection=interaction.data["values"][0]
+        idx=int(selection)
+        if idx<0 or idx>=len(self.players):
+            return await interaction.response.send_message("Invalid roster selection.",ephemeral=True)
+        selected=self.players[idx]
+        await interaction.response.defer(thinking=True)
+        try:
+            allrows=await expanded_stats("Advanced")
+            matching=[record for record in allrows
+                      if value(record,"PLAYER","NAME","GAMERTAG").casefold()==selected["name"].casefold()
+                      and match_team(value(record,"TEAM"),"WSH")]
+            # Never silently choose from several matching identities.
+            if len(matching)==1:
+                record=matching[0]
+                ea_history=await optional_ea_history()
+                ea=ea_for_record(record,ea_history)
+                embed,graphic=await chel_card_payload(record,ea_summary=ea)
+                await interaction.followup.send(
+                    embed=embed,file=graphic,
+                    view=AdvancedStatsView(record,interaction.user.id,ea_summary=ea),
+                    allowed_mentions=discord.AllowedMentions.none())
+                return
+            if len(matching)>1:
+                log.warning("Duplicate PlayCHL Advanced names for roster player %s",selected["name"])
+        except Exception as exc:
+            log.warning("Advanced lookup for roster player unavailable: %s",exc)
+        await interaction.followup.send(embed=roster_player_embed(selected),
+                                        allowed_mentions=discord.AllowedMentions.none())
+
 class AdvancedStatsView(discord.ui.View):
     def __init__(self, record, owner_id, ea_summary=None):
         super().__init__(timeout=300)
@@ -784,10 +877,22 @@ class AdvancedStatsView(discord.ui.View):
             embed=advanced_embed(self.record, select.values[0], self.ea_summary), view=self)
 
 
-@bot.tree.command(name='advanced', description='Browse CHL advanced stats by player and category')
+@bot.tree.command(name='advanced', description='Choose Capitals roster/TC players or browse published Advanced stats')
 @app_commands.describe(player='Optional player name', team='Optional team abbreviation, e.g. WSH')
 async def advanced_command(interaction: discord.Interaction, player: str = '', team: str = ''):
     await interaction.response.defer(thinking=True)
+    if not player.strip() and (not team.strip() or resolve_team(team)=="WSH"):
+        try:
+            entries=await washington_roster()
+            panel=CapitalsRosterView(interaction.user.id,entries)
+            return await interaction.followup.send(
+                panel.summary,view=panel,
+                allowed_mentions=discord.AllowedMentions.none())
+        except Exception as exc:
+            log.warning("Washington roster selector failed: %s",exc)
+            return await interaction.followup.send(
+                "Unable to load the Washington roster and TC list right now. "
+                "Try again or supply a specific player name.",ephemeral=True)
     try:
         rows = await expanded_stats('Advanced')
         if player:
