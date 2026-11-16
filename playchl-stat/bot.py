@@ -8,7 +8,11 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from playwright.async_api import async_playwright
 from PIL import Image, ImageDraw, ImageFont
-from ea_club import fetch_matches as ea_fetch_matches, recent_lines as ea_recent_lines, player_lines as ea_player_lines, endpoint as ea_endpoint
+from ea_club import (fetch_matches as ea_fetch_matches,
+    recent_lines as ea_recent_lines, player_lines as ea_player_lines,
+    endpoint as ea_endpoint, player_summary as ea_player_summary,
+    summary_lines as ea_summary_lines, ranking_lines as ea_ranking_lines,
+    game_report_lines as ea_game_report_lines)
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN', '')
@@ -146,6 +150,28 @@ def value(d, *keys):
         if d.get(k) is not None: return d[k]
     return '-'
 
+async def optional_ea_history():
+    """EA can be unavailable; never fail a PlayCHL league command because of it."""
+    try:
+        return await asyncio.wait_for(ea_fetch_matches(), timeout=18)
+    except Exception as exc:
+        log.warning('Supplementary EA match data not available: %s', exc)
+        return None
+
+def ea_for_record(record, matches):
+    """Associate by exact gamertag only, and only for Washington players.
+
+    A partial-name or across-team match could attach another person's private
+    stats to a PlayCHL profile, so those comparisons are intentionally refused.
+    """
+    if matches is None:
+        return None
+    team = str(value(record, 'TEAM'))
+    if not match_team(team, 'WSH'):
+        return None
+    gamertag = str(value(record, 'PLAYER', 'NAME', 'GAMERTAG'))
+    return ea_player_summary(matches, gamertag)
+
 def chunks(lines, limit=1700):
     out=[]; current=''
     for line in lines:
@@ -261,9 +287,20 @@ async def player_command(interaction:discord.Interaction,name:str):
     try:
         rows=await skaters()
         matches=[r for r in rows if name.casefold() in value(r,'PLAYER').casefold()]
-        if not matches: return await interaction.followup.send('No matching player in the currently displayed skater table.',ephemeral=True)
-        await reply(interaction,[f"{value(r,'PLAYER')} ({value(r,'TEAM')}) GP {value(r,'GP')} G {value(r,'G')} A {value(r,'A')} P {value(r,'P','PTS')}" for r in matches[:25]])
-    except Exception as e: await interaction.followup.send(f'Unable to read player stats: {e}',ephemeral=True)
+        if not matches:
+            return await interaction.followup.send('No matching player in the currently displayed skater table.',ephemeral=True)
+        ea_history=await optional_ea_history()
+        output=[]
+        for r in matches[:25]:
+            output.append(f"{value(r,'PLAYER')} ({value(r,'TEAM')}) GP {value(r,'GP')} G {value(r,'G')} A {value(r,'A')} P {value(r,'P','PTS')} • PlayCHL league")
+            ea=ea_for_record(r,ea_history)
+            if ea:
+                output.extend('  '+line for line in ea_summary_lines(ea))
+        if ea_history is None:
+            output.append('EA private-match supplement unavailable; published PlayCHL values are unaffected.')
+        await reply(interaction,output)
+    except Exception as e:
+        await interaction.followup.send(f'Unable to read player stats: {e}',ephemeral=True)
 
 # Schedule reader: PlayCHL displays games as two-column cards, not HTML tables.
 TEAM_ALIASES = {
@@ -532,7 +569,7 @@ ADVANCED_SECTIONS = {
 ADVANCED_IDENTITY = {'PLAYER', 'NAME', 'GAMERTAG', 'TEAM', 'POS', 'POSITION'}
 
 
-def advanced_embed(record, section='overview'):
+def advanced_embed(record, section='overview', ea_summary=None):
     player = str(value(record, 'PLAYER', 'NAME', 'GAMERTAG'))
     team = str(value(record, 'TEAM'))
     heading = ADVANCED_SECTIONS.get(section, ('All Statistics', ()))[0]
@@ -559,7 +596,11 @@ def advanced_embed(record, section='overview'):
             text = '\n'.join(f'**{k}**  {v}' for k, v in group)
             embed.add_field(name=f'Statistics {offset // 8 + 1}' if len(fields) > 8 else 'Statistics',
                             value=text[:1024], inline=False)
-    embed.set_footer(text='Values are shown as published by PlayCHL')
+    if ea_summary:
+        separate='\n'.join(ea_summary_lines(ea_summary))
+        embed.add_field(name='EA private club matches • separate source',
+                        value=separate[:1024],inline=False)
+    embed.set_footer(text='PlayCHL league values and EA private matches are never combined')
     return embed
 
 
@@ -597,7 +638,7 @@ def _chel_text(draw, xy, text, font, fill, max_width=None):
     draw.text(xy, text, font=font, fill=fill)
 
 
-def chel_card_bytes(record, section='overview'):
+def chel_card_bytes(record, section='overview', ea_summary=None):
     """Render a 1200×675 player graphic from published PlayCHL fields."""
     width, height = 1200, 675
     im = Image.new('RGB', (width, height), '#0b1019')
@@ -650,6 +691,12 @@ def chel_card_bytes(record, section='overview'):
     if not fields:
         d.text((425,190),'No published stats for this category',
                font=_chel_font(24),fill=muted)
+    if ea_summary:
+        d.rectangle((420,598,1155,632),fill='#17354a')
+        annotation=(f"EA PRIVATE: {ea_summary['matches']} MATCHES"
+                    f" | G {ea_summary['goals'] if ea_summary['goals'] is not None else '?'}"
+                    f" | A {ea_summary['assists'] if ea_summary['assists'] is not None else '?'}")
+        d.text((433,608),annotation,font=_chel_font(15),fill=ice)
     d.line((420,635,1155,635),fill='#38516b',width=2)
     d.text((420,644),'LIVE PLAYCHL DATA  •  NO ESTIMATED RATINGS',
            font=_chel_font(16),fill=muted)
@@ -659,17 +706,18 @@ def chel_card_bytes(record, section='overview'):
     return output
 
 
-async def chel_card_payload(record, section='overview'):
-    png = await asyncio.to_thread(chel_card_bytes, record, section)
-    embed = advanced_embed(record, section)
+async def chel_card_payload(record, section='overview', ea_summary=None):
+    png = await asyncio.to_thread(chel_card_bytes, record, section, ea_summary)
+    embed = advanced_embed(record, section, ea_summary)
     embed.set_image(url='attachment://chel_player_card.png')
     return embed, discord.File(png, filename='chel_player_card.png')
 
 class AdvancedStatsView(discord.ui.View):
-    def __init__(self, record, owner_id):
+    def __init__(self, record, owner_id, ea_summary=None):
         super().__init__(timeout=300)
         self.record = record
         self.owner_id = owner_id
+        self.ea_summary = ea_summary
 
     @discord.ui.select(
         placeholder='Choose a statistics category…',
@@ -686,7 +734,7 @@ class AdvancedStatsView(discord.ui.View):
             return await interaction.response.send_message(
                 'Run /advanced yourself to browse statistics.', ephemeral=True)
         await interaction.response.edit_message(
-            embed=advanced_embed(self.record, select.values[0]), view=self)
+            embed=advanced_embed(self.record, select.values[0], self.ea_summary), view=self)
 
 
 @bot.tree.command(name='advanced', description='Browse CHL advanced stats by player and category')
@@ -703,13 +751,15 @@ async def advanced_command(interaction: discord.Interaction, player: str = '', t
         if not rows:
             return await interaction.followup.send(
                 'No matching advanced statistics in the readable table.', ephemeral=True)
-        # Show one interactive card per matching player, capped to avoid spam.
+        # Pull the EA supplement once; never let it alter league season data.
+        ea_history=await optional_ea_history()
         for record in rows[:5]:
-            embed, graphic = await chel_card_payload(record)
+            ea=ea_for_record(record,ea_history)
+            embed, graphic = await chel_card_payload(record,ea_summary=ea)
             await interaction.followup.send(
                 embed=embed,
                 file=graphic,
-                view=AdvancedStatsView(record, interaction.user.id),
+                view=AdvancedStatsView(record, interaction.user.id, ea_summary=ea),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
         if len(rows) > 5:
@@ -733,7 +783,13 @@ async def statsplus_command(interaction: discord.Interaction, player: str = '', 
             rows = [r for r in rows if match_team(value(r, 'TEAM'), code)]
         if not rows:
             return await interaction.followup.send('No matching Stats+ rows in the readable table.', ephemeral=True)
-        await reply(interaction, expanded_lines(rows, 'CHL STATS+'))
+        output=expanded_lines(rows, 'CHL STATS+')
+        if player:
+            ea_history=await optional_ea_history()
+            for record in rows[:5]:
+                ea=ea_for_record(record,ea_history)
+                if ea:output.extend('EA SUPPLEMENT — '+line for line in ea_summary_lines(ea))
+        await reply(interaction, output)
     except Exception as exc:
         log.exception('Stats+ failed')
         await interaction.followup.send(f'Unable to read Stats+: {exc}', ephemeral=True)
@@ -904,6 +960,35 @@ async def ea_player_command(interaction:discord.Interaction,name:str):
         await interaction.followup.send(
             "EA private-match player data is temporarily unavailable. "
             "Use /player for published PlayCHL league totals.",ephemeral=True)
+
+@bot.tree.command(name='ea_rankings',description='Rank Capitals players in EA private matches, separately from CHL standings')
+@app_commands.describe(metric='Verified EA private-match statistic to rank')
+@app_commands.choices(metric=[
+    app_commands.Choice(name='Points (G+A)',value='points'),
+    app_commands.Choice(name='Goals',value='goals'),
+    app_commands.Choice(name='Assists',value='assists'),
+    app_commands.Choice(name='Shots',value='shots'),
+    app_commands.Choice(name='Goalie saves',value='saves'),
+])
+async def ea_rankings_command(interaction:discord.Interaction,metric:app_commands.Choice[str]):
+    await interaction.response.defer(thinking=True)
+    try:
+        matches=await ea_fetch_matches()
+        await reply(interaction,ea_ranking_lines(matches,metric.value))
+    except Exception as exc:
+        log.warning('EA rankings unavailable: %s',exc)
+        await interaction.followup.send('EA private-match rankings are unavailable; PlayCHL league rankings are unchanged.',ephemeral=True)
+
+@bot.tree.command(name='ea_game',description='Detailed EA private-match game report by EA match ID')
+@app_commands.describe(match_id='Exact EA match ID displayed by /ea_recent')
+async def ea_game_command(interaction:discord.Interaction,match_id:str):
+    await interaction.response.defer(thinking=True)
+    try:
+        matches=await ea_fetch_matches()
+        await reply(interaction,ea_game_report_lines(matches,match_id))
+    except Exception as exc:
+        log.warning('EA match report unavailable: %s',exc)
+        await interaction.followup.send('EA game history is unavailable; PlayCHL reports are unaffected.',ephemeral=True)
 
 if __name__=='__main__':
     if not TOKEN: raise SystemExit('Set DISCORD_TOKEN in .env before running')
