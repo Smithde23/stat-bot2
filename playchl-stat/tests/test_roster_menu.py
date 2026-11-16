@@ -118,16 +118,20 @@ class RosterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("Refresh live roster" in getattr(x,"label","")
                             for x in menu.children))
 
-    async def test_slash_autocomplete_includes_tc(self):
-        names=await bot.autocomplete_capital_players(None,"savs")
-        self.assertTrue(any("savsman99"==x.value for x in names))
-        self.assertTrue(any("(TC)" in x.name for x in names))
+    def test_native_command_choices_include_tc(self):
+        self.assertTrue(any(x.value=="savsman99" for x in bot._ADVANCE_PLAYER_CHOICES))
+        self.assertTrue(any("(TC)" in x.name for x in bot._ADVANCE_PLAYER_CHOICES))
 
-    def test_advance_command_has_player_autocomplete(self):
+    def test_advance_has_static_native_choices_not_flashing_autocomplete(self):
         command=next(x for x in bot.bot.tree.get_commands() if x.name=="advance")
         self.assertIn("player",command._params)
         self.assertFalse(command._params["player"].required)
-        self.assertIsNotNone(command._params["player"].autocomplete)
+        self.assertIsNone(command._params["player"].autocomplete)
+        choices=command._params["player"].choices
+        self.assertEqual(len(choices),23)
+        self.assertEqual(len({x.value for x in choices}),23)
+        self.assertTrue(any(x.value=="savsman99" and "(TC)" in x.name for x in choices))
+        self.assertTrue(any(x.value=="Wristshot_34" for x in choices))
         self.assertIn("TC",bot.CapitalsRosterView(111,parse_roster(SNAPSHOT)).summary)
 
     def test_reject_incorrect_team_or_missing_sections(self):
