@@ -6,6 +6,23 @@ The profile contains separate SKATERS, GOALIES and TC PLAYERS sections.
 import re
 
 TEAM_PROFILE="https://playchl.com/teams/6ac010959de0f7b0124df65f"
+# Snapshot read from the official team profile on 2026-11-15.
+# Used only when the live profile cannot be loaded. The bot labels it clearly.
+LAST_VERIFIED_REGULAR=(
+    "Wristshot_34","CrazyJHawk91","softnuts4u","Reqhzii",
+    "Leafsfan349054","LEAN BEEEF","Buckley0306","XXGhxst-_-XX",
+    "YESHUA_RETURNS","KASKADE_420","Masterpip16","V fonkas V",
+    "WWuSamm","swatman27","D_is_key","Charlielucia13",
+    "Wwusamm","Buckkey0306"
+)
+LAST_VERIFIED_TC=("CH3LK1NG","savsman99","Bad at NHL","BusBeanWPG","foodude56")
+
+def last_verified_roster():
+    return ([{"name":name,"status":"Roster","position":"","stats":{},"snapshot":True}
+            for name in LAST_VERIFIED_REGULAR]
+            +[{"name":name,"status":"TC","position":"","stats":{},"snapshot":True}
+              for name in LAST_VERIFIED_TC])
+
 
 def _lines(text):
     return [line.strip() for line in str(text or "").splitlines() if line.strip()]
@@ -77,7 +94,12 @@ async def fetch_roster(browser):
         if not response or response.status>=400:
             raise RuntimeError("PlayCHL Washington team profile unavailable")
         # The team profile is client-rendered.
-        await page.get_by_text("TC PLAYERS",exact=True).first.wait_for(timeout=18000)
+        try:
+            await page.get_by_text("TC PLAYERS",exact=True).first.wait_for(timeout=12000)
+        except Exception:
+            # Some builds render TC as nested plain text, not a standalone
+            # element. The parser below validates both roster sections.
+            pass
         text=await page.locator("body").inner_text()
         return parse_roster(text)
     finally:
