@@ -92,10 +92,10 @@ class RosterTests(unittest.IsolatedAsyncioTestCase):
         records=parse_roster(SNAPSHOT)
         extended=records+[{"name":f"Player{i}","status":"TC","position":"","stats":{}} for i in range(36)]
         first=bot.CapitalsRosterView(111,extended)
-        self.assertEqual(len(first.children[0].options),25)
+        self.assertEqual(len(next(x for x in first.children if hasattr(x,"options")).options),25)
         self.assertEqual(first.max_page,1)
         nextpage=bot.CapitalsRosterView(111,extended,page=1)
-        self.assertEqual(len(nextpage.children[0].options),20)
+        self.assertEqual(len(next(x for x in nextpage.children if hasattr(x,"options")).options),20)
         self.assertEqual(nextpage.children[0].options[0].value,"25")
         self.assertTrue(any("TC" in x.description for x in nextpage.children[0].options))
 
@@ -111,10 +111,10 @@ class RosterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(snapshot),23)
         self.assertEqual(len([x for x in snapshot if x["status"]=="TC"]),5)
         menu=bot.CapitalsRosterView(123,snapshot)
-        self.assertEqual(len(menu.children[0].options),23)
+        self.assertEqual(len(next(x for x in menu.children if hasattr(x,"options")).options),23)
         self.assertIn("Last verified roster",menu.summary)
         self.assertTrue(any("Refresh live roster" in getattr(x,"label","")
-                            for x in menu.children[1:]))
+                            for x in menu.children))
 
     async def test_slash_autocomplete_includes_tc(self):
         names=await bot.autocomplete_capital_players(None,"savs")
