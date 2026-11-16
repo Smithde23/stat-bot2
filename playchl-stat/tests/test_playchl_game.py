@@ -68,6 +68,40 @@ class PlayCHLGameTests(unittest.TestCase):
         self.assertEqual(parsed["players"][1]["name"],"GoalieOne")
         self.assertEqual(parsed["players"][1]["position"],"G")
 
+    def test_live_nov5_calgary_washington_tables(self):
+        # Layout observed from the real Nov 5 PlayCHL game-page diagnostic.
+        real={
+            "body":"Calgary Flames vs Washington Capitals Match Stats",
+            "tables":[
+                {"heading":"Match Stats","header":["CGY","","WSH"],
+                 "rows":[["2","Goals","5"],["15","Shots","26"],
+                         ["9","Hits","13"]]},
+                {"heading":"Calgary Flames Skaters",
+                 "header":["Player","Pos","G","A","P","SH"],
+                 "rows":[["24.0maddogg-wazup","D","0","0","0","0"]]},
+                {"heading":"Washington Capitals Skaters",
+                 "header":["Player","Pos","G","A","P","SH"],
+                 "rows":[["35.5LEAN BEEEF","LW","2","1","3","4"]]},
+                {"heading":"Calgary Flames Goalies",
+                 "header":["Player","Pos","SV","SA","GA","SV%"],
+                 "rows":[["43.0salty-blueline90","—","21","26","5","0.810"]]},
+                {"heading":"Washington Capitals Goalies",
+                 "header":["Player","Pos","SV","SA","GA","SV%"],
+                 "rows":[["38.0swatman27","—","13","15","2","0.870"]]}
+            ],
+        }
+        detail=parse_detail(real,"WSH","CGY")
+        self.assertEqual(detail["match_order"],("CGY","WSH"))
+        self.assertEqual(len(detail["players"]),4)
+        self.assertEqual({p["team"] for p in detail["players"]},{"WSH","CGY"})
+        row=dict(ROW,AWAY="WSH",HOME="CGY",DATE="Nov 5")
+        output="\n".join(game_lines(row,detail))
+        self.assertIn("FINAL SCORE: WSH 5 — CGY 2",output)
+        self.assertIn("Goals: CGY 2 — WSH 5",output)
+        self.assertIn("LEAN BEEEF",output)
+        self.assertIn("swatman27",output)
+        self.assertIn("SV 13",output)
+
     def test_wrong_team_section_cannot_inject_player(self):
         payload=dict(PAYLOAD)
         payload["tables"]=[{"heading":"Random Team Skaters","header":["Player","Pos","G","A","P"],
