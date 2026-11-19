@@ -879,7 +879,7 @@ async def send_selected_capital_player(interaction,selected):
                            if str(k).upper() not in identity
                            and str(v).strip() not in ('','-','N/A','None')]
                 gp=next((float(v.replace(',','')) for k,v in populated
-                         if k=='GP' and re.fullmatch(r'\\d+(?:\\.\\d+)?',v.replace(',',''))),0)
+                         if k=='GP' and re.fullmatch(r'\d+(?:\.\d+)?',v.replace(',',''))),0)
                 return (gp,len(populated))
             record=max(candidates,key=completeness)
             if len(candidates)>1:
