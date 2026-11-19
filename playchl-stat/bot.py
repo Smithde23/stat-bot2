@@ -863,8 +863,28 @@ async def send_selected_capital_player(interaction,selected):
         matching=[record for record in allrows
                   if value(record,"PLAYER","NAME","GAMERTAG").casefold()==selected["name"].casefold()
                   and match_team(value(record,"TEAM"),"WSH")]
-        if len(matching)==1:
-            record=matching[0]
+        if matching:
+            # The published Advanced table can contain multiple rows for one
+            # gamertag (for example position splits). Never treat this as no stats.
+            # Select the most informative published row without summing overlapping
+            # season totals or attaching another player's data.
+            unique={}
+            for candidate in matching:
+                signature=tuple(sorted((str(k),str(v)) for k,v in candidate.items()))
+                unique.setdefault(signature,candidate)
+            candidates=list(unique.values())
+            def completeness(row):
+                identity={'PLAYER','NAME','GAMERTAG','TEAM','POS','POSITION'}
+                populated=[(str(k).upper(),str(v).strip()) for k,v in row.items()
+                           if str(k).upper() not in identity
+                           and str(v).strip() not in ('','-','N/A','None')]
+                gp=next((float(v.replace(',','')) for k,v in populated
+                         if k=='GP' and re.fullmatch(r'\\d+(?:\\.\\d+)?',v.replace(',',''))),0)
+                return (gp,len(populated))
+            record=max(candidates,key=completeness)
+            if len(candidates)>1:
+                log.warning("Multiple Advanced rows for %s (%d unique); displaying highest-GP, most-complete published row without summing overlapping stats",
+                            selected["name"],len(candidates))
             ea_history=await optional_ea_history()
             ea=ea_for_record(record,ea_history)
             embed,graphic=await chel_card_payload(record,ea_summary=ea)
@@ -873,8 +893,6 @@ async def send_selected_capital_player(interaction,selected):
                 view=AdvancedStatsView(record,interaction.user.id,ea_summary=ea),
                 allowed_mentions=discord.AllowedMentions.none())
             return
-        if len(matching)>1:
-            log.warning("Duplicate advanced record names for Washington roster player %s",selected["name"])
     except Exception as exc:
         log.warning("Advanced lookup unavailable for Washington roster player %s: %s",
                     selected["name"],exc)
