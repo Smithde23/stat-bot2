@@ -261,7 +261,14 @@ async def player_command(interaction:discord.Interaction,name:str):
         rows=await skaters()
         matches=[r for r in rows if name.casefold() in value(r,'PLAYER').casefold()]
         if not matches: return await interaction.followup.send('No matching player in the currently displayed skater table.',ephemeral=True)
-        await reply(interaction,[f"{value(r,'PLAYER')} ({value(r,'TEAM')}) GP {value(r,'GP')} G {value(r,'G')} A {value(r,'A')} P {value(r,'P','PTS')}" for r in matches[:25]])
+        for record in matches[:5]:
+            embed, graphic = await chel_card_payload(record, 'overview')
+            await interaction.followup.send(embed=embed, file=graphic,
+                allowed_mentions=discord.AllowedMentions.none())
+        if len(matches) > 5:
+            await interaction.followup.send(
+                f'Showing 5 of {len(matches)} matches. Narrow the player name for more precise results.',
+                ephemeral=True)
     except Exception as e: await interaction.followup.send(f'Unable to read player stats: {e}',ephemeral=True)
 
 # Schedule reader: PlayCHL displays games as two-column cards, not HTML tables.
@@ -753,7 +760,13 @@ async def statsplus_command(interaction: discord.Interaction, player: str = '', 
             rows = [r for r in rows if match_team(value(r, 'TEAM'), code)]
         if not rows:
             return await interaction.followup.send('No matching Stats+ rows in the readable table.', ephemeral=True)
-        await reply(interaction, expanded_lines(rows, 'CHL STATS+'))
+        if player:
+            for record in rows[:5]:
+                embed, graphic = await chel_card_payload(record, 'overview')
+                await interaction.followup.send(embed=embed, file=graphic,
+                    allowed_mentions=discord.AllowedMentions.none())
+        else:
+            await reply(interaction, expanded_lines(rows, 'CHL STATS+'))
     except Exception as exc:
         log.exception('Stats+ failed')
         await interaction.followup.send(f'Unable to read Stats+: {exc}', ephemeral=True)
