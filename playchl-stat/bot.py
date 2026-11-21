@@ -644,7 +644,7 @@ def _chel_text(draw, xy, text, font, fill, max_width=None):
 
 def chel_card_bytes(record, section='overview', ea_summary=None):
     """Compact dashboard modeled on the supplied Rink Rivals card layout."""
-    W,H=1140,870
+    W,H=1140,690
     im=Image.new('RGB',(W,H),'#090e1a')
     d=ImageDraw.Draw(im)
     white='#f2f5fc'; muted='#8d99b0'; blue='#92b8ff'
@@ -681,8 +681,7 @@ def chel_card_bytes(record, section='overview', ea_summary=None):
     box(45,90,380,350,'#182238',25)
     d.ellipse((151,115,275,239),fill=purple)
     txt(187,141,badge,60,'#101524',True)
-    txt(161,264,'Most played',16,muted)
-    txt(111,292,'Goaltender' if goalie else ('Position: '+position),27,white,True,maxwidth=250)
+    txt(106,272,'PLAYER PROFILE',22,white,True)
     box(394,90,1095,190,panel,23)
     txt(422,113,name,34,white,True,maxwidth=450)
     txt(423,159,team,18,purple,True)
@@ -699,24 +698,16 @@ def chel_card_bytes(record, section='overview', ea_summary=None):
         box(x,289,x+33,311,c,10)
         txt(x+8,291,p,14,'#101524',True)
         txt(x+43,288,'1' if active else '—',19,muted,True)
-    box(45,363,1095,541,panel,22)
-    txt(65,376,'Splits',19,white,True)
-    for i,h in enumerate(('','GP','GA','SV','SV%','SO')):
-        txt(65+i*170,411,h,15,muted,True)
-    # The source is a season aggregate, not a dated match-history feed.
-    row(439,('Last night','—','—','—','—','—'))
-    row(480,('7 days','—','—','—','—','—'))
-    # Do not mislabel season totals as 30-day totals.
-    box(45,553,1095,657,'#0e1727',16)
+    box(45,363,1095,467,'#0e1727',16)
     regular=[('Goals',stat('G')),('Assists',stat('A')),('Points',stat('P','PTS')),
              ('+/-',stat('+/-')),('Hits',stat('HIT','HITS')),('PIM',stat('PIM'))]
     for i,(label,value) in enumerate(regular):
         x=49+i*175
-        box(x,557,x+168,653,tile,14)
-        txt(x+13,569,label,16,muted)
-        txt(x+13,599,value,36,'#f4788a' if value.startswith('-') else blue,True,maxwidth=143)
-    box(45,670,1095,817,panel,21)
-    txt(65,684,'Goalie' if section in ('overview','goalie') else ADVANCED_SECTIONS.get(section,('Advanced',))[0],19,white,True)
+        box(x,367,x+168,463,tile,14)
+        txt(x+13,379,label,16,muted)
+        txt(x+13,409,value,36,'#f4788a' if value.startswith('-') else blue,True,maxwidth=143)
+    box(45,480,1095,627,panel,21)
+    txt(65,494,'Goalie' if section in ('overview','goalie') else ADVANCED_SECTIONS.get(section,('Advanced',))[0],19,white,True)
     if section in ('overview','goalie'):
         detail=[('Games',stat('GP') if goalie else '—'),('GAA',stat('GAA')),
                 ('SV%',stat('SV%')),('GA',stat('GA')),('Saves',stat('SV')),
@@ -727,12 +718,12 @@ def chel_card_bytes(record, section='overview', ea_summary=None):
         detail=(detail+[('—','—')]*6)[:6]
     for i,(key,val) in enumerate(detail):
         x=65+i*169
-        if i:d.line((x-9,727,x-9,797),fill='#293449',width=2)
-        txt(x,733,key,16,muted)
-        txt(x,763,val,27,white,True,maxwidth=145)
+        if i:d.line((x-9,537,x-9,607),fill='#293449',width=2)
+        txt(x,543,key,16,muted)
+        txt(x,573,val,27,white,True,maxwidth=145)
     if ea_summary:
-        txt(60,828,'EA private matches: '+str(ea_summary.get('matches','—'))+' (separate source)',14,muted)
-    txt(870,835,'playchl.com',16,muted)
+        txt(60,639,'EA private matches: '+str(ea_summary.get('matches','—'))+' (separate source)',14,muted)
+    txt(870,650,'playchl.com',16,muted)
     out=io.BytesIO()
     im.save(out,format='PNG',optimize=True)
     out.seek(0)
