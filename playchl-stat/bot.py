@@ -718,7 +718,9 @@ def chel_card_bytes(record, section='overview', ea_summary=None):
         while d.textbbox((0,0),val,font=f)[2]>140 and f.size>13:
             f=_chel_font(f.size-2)
         d.text((x+13,y+38),val,font=f,fill=('#f27a8b' if val.startswith('-') else blue))
-    if ea_summary:\n        label(57,665,'EA PRIVATE: '+str(ea_summary.get('matches','—'))+' matches (separate source)',15,blue)\n    label(57,690,'PLAYCHL  •  Published statistics only  •  Missing data shown as —',15,muted)
+    if ea_summary:
+        label(57,665,'EA PRIVATE: '+str(ea_summary.get('matches','—'))+' matches (separate source)',15,blue)
+    label(57,690,'PLAYCHL  •  Published statistics only  •  Missing data shown as —',15,muted)
     out=io.BytesIO()
     im.save(out,format='PNG',optimize=True)
     out.seek(0)
