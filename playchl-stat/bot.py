@@ -643,72 +643,86 @@ def _chel_text(draw, xy, text, font, fill, max_width=None):
 
 
 def chel_card_bytes(record, section='overview', ea_summary=None):
-    """Render a 1200×675 player graphic from published PlayCHL fields."""
-    width, height = 1200, 675
-    im = Image.new('RGB', (width, height), '#0b1019')
+    """Rink Rivals-inspired compact dark stat card, using only published values."""
+    W, H = 1100, 740
+    im = Image.new('RGB', (W, H), '#090f1c')
     d = ImageDraw.Draw(im)
-    red, ice, muted, white = '#e92d59', '#4cdbf3', '#9baec2', '#f6f8ff'
-    # Slanted arena lighting and an original geometric crest.
-    for x in range(0, width, 12):
-        d.line([(x, 0), (x-235, height)], fill='#111b2b', width=2)
-    d.polygon([(0,0),(410,0),(270,675),(0,675)], fill='#141e30')
-    d.polygon([(20,35),(380,35),(265,638),(20,638)], outline=red, width=5)
-    d.rounded_rectangle((48,68,330,115), radius=9, fill=red)
-    d.text((68,76), 'CONTINENTAL HOCKEY LEAGUE', font=_chel_font(20), fill=white)
-    d.text((48,150), 'PLAYER', font=_chel_font(28), fill=muted)
-    name = str(value(record, 'PLAYER', 'NAME', 'GAMERTAG'))
-    team = str(value(record, 'TEAM'))
-    font_name = _chel_font(47)
-    while d.textbbox((0,0), name, font=font_name)[2] > 310 and font_name.size > 22:
-        font_name = _chel_font(font_name.size-2)
-    d.text((46,196), name, font=font_name, fill=white)
-    d.rounded_rectangle((47,279,178,337), radius=8, fill='#273b56')
-    d.text((66,291), team[:10].upper(), font=_chel_font(27), fill=ice)
-    d.text((47,375), 'SEASON 2', font=_chel_font(22), fill=muted)
-    d.text((47,413), 'ADVANCED STATS', font=_chel_font(25), fill=white)
-    d.line((47,458,302,458), fill=red, width=4)
-    d.text((47,488), 'SOURCE: PLAYCHL', font=_chel_font(17), fill=muted)
-    d.text((47,600), 'CHL  //  PLAYER PROFILE', font=_chel_font(16), fill=muted)
-
-    title = ADVANCED_SECTIONS.get(section, ('All Stats', ()))[0].upper()
-    d.text((420,65), title, font=_chel_font(44), fill=white)
-    d.rectangle((420,124,1155,129), fill=red)
-    if section == 'all':
-        fields = [(k,v) for k,v in record.items()
-                  if k and k.upper() not in ADVANCED_IDENTITY and str(v).strip()]
+    bg, panel, panel2 = '#090f1c', '#121d2d', '#192538'
+    white, muted, purple, blue = '#f4f6fc', '#91a0b5', '#bb7bf7', '#8eb6ff'
+    def rect(box, color, radius=19):
+        d.rounded_rectangle(box, radius=radius, fill=color)
+    def label(x, y, text, size=18, color=muted, bold=False):
+        d.text((x,y), str(text), font=_chel_font(size, bold), fill=color)
+    def field(*keys):
+        for k in keys:
+            v = record.get(k)
+            if v is not None and str(v).strip() not in ('', '-'):
+                return str(v).strip()
+        return '—'
+    name = field('PLAYER', 'NAME', 'GAMERTAG')
+    team = field('TEAM')
+    pos = field('POS', 'POSITION')
+    games = field('GP')
+    rect((20,20,1080,720),bg,36)
+    d.line((58,71,1040,71), fill='#253248', width=2)
+    rect((48,38,190,76), '#25345b', 19)
+    label(70,47,'Career stats' if section=='overview' else 'Advanced stats',17,blue,True)
+    label(984,46,'PLAYCHL',16,muted,True)
+    rect((48,96,352,335),panel2,24)
+    d.ellipse((140,120,260,240),fill=purple)
+    letter = 'G' if pos.upper() in ('G','GOALIE','GK') else (pos[0].upper() if pos!='—' else 'P')
+    label(178,149,letter,52,bg,True)
+    label(142,257,'Most played',16,muted)
+    label(107,281,'Goaltender' if letter=='G' else ('Position: '+pos),24,white,True)
+    rect((365,96,1052,198),panel,21)
+    label(390,122,name,31,white,True)
+    label(392,162,team,17,purple,True)
+    label(939,116,games,41,white,True)
+    label(937,163,'Games played',15,muted)
+    rect((365,209,1052,335),panel,21)
+    label(390,224,'Positions',18,white,True)
+    positions=['C','LW','RW','D','G']
+    colors=['#ef6472','#34cf91','#49cce8','#ffd447',purple]
+    for i,(p,c) in enumerate(zip(positions,colors)):
+        x=390+i*130
+        d.rounded_rectangle((x,270,x+108,278),radius=4,fill='#2a3548')
+        if pos.upper()==p or (p=='G' and pos.upper()=='GOALIE'):
+            d.rounded_rectangle((x,270,x+108,278),radius=4,fill=c)
+        label(x,287,p,19,c,True)
+        label(x+37,287,'1' if pos.upper()==p or (p=='G' and pos.upper()=='GOALIE') else '—',18,muted)
+    rect((48,349,1052,489),panel,21)
+    label(69,363,'SPLITS / SEASON',17,white,True)
+    cols=[('GP',field('GP')),('G',field('G')),('A',field('A')),('P',field('P','PTS')),('SV%',field('SV%')),('SO',field('SO'))]
+    for i,(k,v) in enumerate(cols):
+        x=70+i*162
+        label(x,405,k,17,muted,True)
+        label(x,437,v,28,white,True)
+    # Category tiles: never invent a value when the source lacks that column.
+    if section=='all':
+        fields=[(k,v) for k,v in record.items() if k and k.upper() not in ADVANCED_IDENTITY and str(v).strip()]
     else:
-        fields = [(k,record[k]) for k in ADVANCED_SECTIONS[section][1]
-                  if k in record and str(record[k]).strip()]
-    # An image shows the first 12 fields; the embed retains every field.
-    fields = fields[:12]
-    for i, (label, number) in enumerate(fields):
-        col, row = i % 3, i // 3
-        x, y = 420 + col*250, 156 + row*112
-        d.rounded_rectangle((x,y,x+228,y+96), radius=12,
-                            fill='#1b293b', outline='#31465e', width=2)
-        d.text((x+17,y+11), str(label).upper(), font=_chel_font(17), fill=muted)
-        number = str(number)
-        font = _chel_font(31 if len(number) <= 10 else 23)
-        while d.textbbox((0,0),number,font=font)[2] > 204 and font.size > 14:
-            font = _chel_font(font.size-2)
-        d.text((x+17,y+40),number,font=font,fill=ice)
+        fields=[(k,record[k]) for k in ADVANCED_SECTIONS.get(section,ADVANCED_SECTIONS['overview'])[1] if k in record and str(record[k]).strip()]
+    fields=fields[:12]
     if not fields:
-        d.text((425,190),'No published stats for this category',
-               font=_chel_font(24),fill=muted)
-    if ea_summary:
-        d.rectangle((420,598,1155,632),fill='#17354a')
-        annotation=(f"EA PRIVATE: {ea_summary['matches']} MATCHES"
-                    f" | G {ea_summary['goals'] if ea_summary['goals'] is not None else '?'}"
-                    f" | A {ea_summary['assists'] if ea_summary['assists'] is not None else '?'}")
-        d.text((433,608),annotation,font=_chel_font(15),fill=ice)
-    d.line((420,635,1155,635),fill='#38516b',width=2)
-    d.text((420,644),'LIVE PLAYCHL DATA  •  NO ESTIMATED RATINGS',
-           font=_chel_font(16),fill=muted)
-    output = io.BytesIO()
-    im.save(output, format='PNG', optimize=True)
-    output.seek(0)
-    return output
-
+        fields=[('DATA','Not published')]
+    tile_w=160 if len(fields)>6 else 160
+    for i,(k,v) in enumerate(fields):
+        col=i%6
+        row=i//6
+        x=48+col*168
+        y=504+row*91
+        rect((x,y,x+tile_w,y+82),panel2,14)
+        label(x+13,y+10,str(k)[:12],15,muted,True)
+        val=str(v)
+        f=_chel_font(27 if len(val)<9 else 19)
+        while d.textbbox((0,0),val,font=f)[2]>140 and f.size>13:
+            f=_chel_font(f.size-2)
+        d.text((x+13,y+38),val,font=f,fill=('#f27a8b' if val.startswith('-') else blue))
+    if ea_summary:\n        label(57,665,'EA PRIVATE: '+str(ea_summary.get('matches','—'))+' matches (separate source)',15,blue)\n    label(57,690,'PLAYCHL  •  Published statistics only  •  Missing data shown as —',15,muted)
+    out=io.BytesIO()
+    im.save(out,format='PNG',optimize=True)
+    out.seek(0)
+    return out
 
 async def chel_card_payload(record, section='overview', ea_summary=None):
     png = await asyncio.to_thread(chel_card_bytes, record, section, ea_summary)
@@ -920,8 +934,9 @@ class AdvancedStatsView(discord.ui.View):
         if interaction.user.id != self.owner_id:
             return await interaction.response.send_message(
                 'Run /advance yourself to browse statistics.', ephemeral=True)
-        await interaction.response.edit_message(
-            embed=advanced_embed(self.record, select.values[0], self.ea_summary), view=self)
+        await interaction.response.defer()
+        embed, graphic = await chel_card_payload(self.record, select.values[0], self.ea_summary)
+        await interaction.message.edit(embed=embed, attachments=[graphic], view=self)
 
 
 async def autocomplete_capital_players(interaction: discord.Interaction,current:str):
