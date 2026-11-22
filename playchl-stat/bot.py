@@ -576,14 +576,16 @@ ADVANCED_IDENTITY = {'PLAYER', 'NAME', 'GAMERTAG', 'TEAM', 'POS', 'POSITION'}
 def advanced_embed(record, section='overview', ea_summary=None):
     player = str(value(record, 'PLAYER', 'NAME', 'GAMERTAG'))
     team = str(value(record, 'TEAM'))
-    heading = ADVANCED_SECTIONS.get(section, ('All Statistics', ()))[0]
+    heading = ('EA Sports' if section=='ea' else ADVANCED_SECTIONS.get(section, ('Advanced Statistics', ()))[0])
     embed = discord.Embed(
         title=f'🏒 {player} — {heading}',
         description=f'**Team:** {team}  •  **Source:** PlayCHL Advanced',
         color=discord.Color.from_rgb(194, 32, 68),
         url=BASE + '/statistics',
     )
-    if section == 'all':
+    if section == 'ea':
+        fields = []
+    elif section == 'all':
         fields = [(str(k), str(v)) for k, v in record.items()
                   if k and k.upper() not in ADVANCED_IDENTITY and str(v).strip()]
     else:
@@ -661,6 +663,15 @@ def chel_card_bytes(record, section='overview', ea_summary=None):
     if ea_summary:
         ea=[(str(k).replace('_',' ').upper(),str(v)) for k,v in ea_summary.items()
             if k!='name' and v is not None and not isinstance(v,(dict,list,tuple))]
+    groups={
+        'overview':('REGULAR STATS','PlayCHL league totals',regular),
+        'offense':('OFFENSE','PlayCHL offensive metrics',[(k,v) for k,v in source if k in ADVANCED_SECTIONS['offense'][1]]),
+        'defense':('DEFENSE','PlayCHL defensive metrics',[(k,v) for k,v in source if k in ADVANCED_SECTIONS['defense'][1]]),
+        'goalie':('GOALTENDING','PlayCHL goalie metrics',goalie),
+        'ea':('EA SPORTS','Separate club-private match history',ea),
+        'all':('ADVANCED STATS','Other PlayCHL advanced metrics',advanced),
+    }
+    heading,subtitle,items=groups.get(section,groups['overview'])
     W=1600
     white='#f5f7ff'; muted='#a6b6ce'; accent='#83b9ff'
     def stat(*keys):
@@ -668,13 +679,8 @@ def chel_card_bytes(record, section='overview', ea_summary=None):
             v=record.get(k)
             if v is not None and str(v).strip():return str(v)
         return '—'
-    sections=[('01  REGULAR STATS','PlayCHL league totals',regular),
-              ('02  ADVANCED STATS','PlayCHL advanced metrics',advanced),
-              ('03  GOALIE STATS','PlayCHL goaltending metrics',goalie),
-              ('04  EA SPORTS STATS','Club-private match history • separate from league totals',ea)]
-    # One column per metric for comfortable reading in Discord image previews.
-    heights=[102+max(1,(len(items)+1)//2)*66 for _,_,items in sections]
-    H=410+sum(heights)+22*(len(sections)-1)+85
+    rows=max(1,(len(items)+1)//2)
+    H=530+rows*76
     im=Image.new('RGB',(W,H),'#0b1120')
     d=ImageDraw.Draw(im)
     def box(coords,fill,r=20):d.rounded_rectangle(coords,radius=r,fill=fill)
@@ -697,18 +703,17 @@ def chel_card_bytes(record, section='overview', ea_summary=None):
         label(x+20,268,key,22,muted,True)
         label(x+20,306,val,48,white,True,206)
     y=410
-    for (heading,subtitle,items),height in zip(sections,heights):
-        box((36,y,W-36,y+height),'#16243a',22)
-        label(66,y+18,heading,30,white,True)
-        label(68,y+58,subtitle,20,muted)
-        if not items:label(68,y+111,'No verified statistics available',23,muted)
-        for i,(key,val) in enumerate(items):
-            col=i%2; row=i//2; x=65+col*760; yy=y+96+row*66
-            box((x,yy,x+735,yy+58),'#233650',12)
-            label(x+19,yy+14,key,23,muted,True,470)
-            label(x+540,yy+9,val,29,white,True,173)
-        y+=height+22
-    label(58,H-55,'PlayCHL and EA are independent sources. Values are never combined.',20,muted)
+    height=100+rows*76
+    box((36,y,W-36,y+height),'#16243a',22)
+    label(66,y+18,heading,34,white,True)
+    label(68,y+64,subtitle,23,muted)
+    if not items:label(68,y+119,'No verified statistics available',28,muted)
+    for i,(key,val) in enumerate(items):
+        col=i%2; row=i//2; x=65+col*760; yy=y+104+row*76
+        box((x,yy,x+735,yy+67),'#233650',12)
+        label(x+19,yy+18,key,26,muted,True,450)
+        label(x+520,yy+12,val,35,white,True,190)
+    label(58,H-35,'Source: '+('EA club-private matches' if section=='ea' else 'PlayCHL league statistics'),22,muted)
     out=io.BytesIO()
     im.save(out,format='PNG',optimize=True)
     out.seek(0)
@@ -917,7 +922,8 @@ class AdvancedStatsView(discord.ui.View):
             discord.SelectOption(label='Offense', value='offense', emoji='🏒'),
             discord.SelectOption(label='Defense', value='defense', emoji='🛡️'),
             discord.SelectOption(label='Goaltending', value='goalie', emoji='🥅'),
-            discord.SelectOption(label='All Stats', value='all', emoji='📋'),
+            discord.SelectOption(label='Advanced Stats', value='all', emoji='📋'),
+            discord.SelectOption(label='EA Sports', value='ea', emoji='🎮'),
         ],
     )
     async def category_selected(self, interaction: discord.Interaction, select: discord.ui.Select):
