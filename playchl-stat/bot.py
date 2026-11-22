@@ -646,7 +646,7 @@ def _chel_text(draw, xy, text, font, fill, max_width=None):
 
 def chel_card_bytes(record, section='overview', ea_summary=None, page=0):
     """Landscape stat card optimized for Discord mobile image preview."""
-    W,H=1400,770
+    W,H=900,620
     im=Image.new('RGB',(W,H),'#080f1c')
     d=ImageDraw.Draw(im)
     white='#f6f8ff'; muted='#aab8cb'; accent='#78b6ff'
@@ -681,18 +681,17 @@ def chel_card_bytes(record, section='overview', ea_summary=None, page=0):
     }
     title,items=groups.get(section,groups['overview'])
     page=max(0,int(page))
-    pages=max(1,(len(items)+11)//12)
+    pages=max(1,(len(items)+5)//6)
     page=min(page,pages-1)
-    shown=items[page*12:(page+1)*12]
-    # Card header
-    rect(24,24,1376,194,'#17263b',24)
-    rect(44,41,191,77,'#335f9c',16)
-    label(61,47,'PLAYCHL',21,white,True)
-    label(48,90,stat('PLAYER','NAME','GAMERTAG'),49,white,True,880)
-    label(51,151,stat('TEAM'),25,muted,True,860)
-    label(1140,79,'GP',23,muted,True)
-    label(1140,109,stat('GP'),55,white,True,200)
-    # Six large top-level metrics.
+    shown=items[page*6:(page+1)*6]
+    # Mobile-first: a smaller canvas keeps text large in Discord's inline preview.
+    rect(12,12,888,132,'#17263b',18)
+    rect(24,22,143,50,'#335f9c',12)
+    label(36,27,'PLAYCHL',17,white,True)
+    label(26,54,stat('PLAYER','NAME','GAMERTAG'),38,white,True,650)
+    label(28,103,stat('TEAM'),19,muted,True,650)
+    label(782,35,'GP',19,muted,True)
+    label(782,61,stat('GP'),41,white,True,94)
     if section=='goalie':
         featured=[('GAMES',stat('GP')),('SAVES',stat('SV')),('SAVE %',stat('SV%')),
                   ('GAA',stat('GAA')),('SHUTOUTS',stat('SO')),('GOALS AGAINST',stat('GA'))]
@@ -702,23 +701,23 @@ def chel_card_bytes(record, section='overview', ea_summary=None, page=0):
         featured=[('GAMES',stat('GP')),('GOALS',stat('G')),('ASSISTS',stat('A')),
                   ('POINTS',stat('P','PTS')),('SHOTS',stat('SH')),('HITS',stat('HIT','HITS'))]
     for i,(k,v) in enumerate(featured[:6]):
-        x=24+i*228
-        rect(x,211,x+218,337,'#1d3049',17)
-        label(x+15,226,k,20,muted,True,183)
-        label(x+15,263,v,43,white,True,185)
-    # Compact detail panel, at most 12 items per image.
-    rect(24,353,1376,719,'#152338',21)
-    label(46,368,title,29,white,True)
-    label(1165,370,f'{page+1} / {pages}',22,accent,True)
+        col=i%3; row=i//3
+        x=12+col*296; y=143+row*93
+        rect(x,y,x+284,y+86,'#1d3049',13)
+        label(x+14,y+9,k,18,muted,True,253)
+        label(x+14,y+32,v,37,white,True,252)
+    rect(12,340,888,597,'#152338',17)
+    label(28,351,title,25,white,True)
+    label(777,353,f'{page+1} / {pages}',20,accent,True)
     if not shown:
-        label(49,465,'No verified statistics available for this category',27,muted)
+        label(30,448,'No verified stats available',25,muted)
     for i,(key,val) in enumerate(shown):
-        col=i%4; row=i//4
-        x=45+col*332; y=419+row*92
-        rect(x,y,x+320,y+82,'#22344c',12)
-        label(x+13,y+11,key,20,muted,True,289)
-        label(x+13,y+37,val,33,white,True,286)
-    label(34,735,'EA club-private history' if section=='ea' else 'PlayCHL league statistics',19,muted)
+        col=i%3; row=i//3
+        x=25+col*288; y=393+row*96
+        rect(x,y,x+277,y+89,'#22344c',11)
+        label(x+12,y+10,key,20,muted,True,249)
+        label(x+12,y+38,val,33,white,True,247)
+    label(20,603,'EA private matches' if section=='ea' else 'PlayCHL league statistics',14,muted)
     out=io.BytesIO()
     im.save(out,format='PNG',optimize=True)
     out.seek(0)
