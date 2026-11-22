@@ -728,9 +728,8 @@ def chel_card_bytes(record, section='overview', ea_summary=None, page=0):
 
 async def chel_card_payload(record, section='overview', ea_summary=None, page=0):
     png = await asyncio.to_thread(chel_card_bytes, record, section, ea_summary, page)
-    embed = discord.Embed(color=discord.Color.from_rgb(23,38,59))
-    embed.set_image(url='attachment://chel_player_card.png')
-    return embed, discord.File(png, filename='chel_player_card.png')
+    # Native file attachment: avoid the additional embed frame and preview padding.
+    return None, discord.File(png, filename='chel_player_card.png')
 
 
 _WSH_ROSTER_CACHE={"at":0.0,"records":None}
@@ -905,7 +904,7 @@ async def send_selected_capital_player(interaction,selected):
             ea=ea_for_record(record,ea_history)
             embed,graphic=await chel_card_payload(record,ea_summary=ea)
             await interaction.followup.send(
-                embed=embed,file=graphic,
+                file=graphic,
                 view=AdvancedStatsView(record,interaction.user.id,ea_summary=ea),
                 allowed_mentions=discord.AllowedMentions.none())
             return
@@ -943,7 +942,7 @@ class AdvancedStatsView(discord.ui.View):
         self.section = select.values[0]
         self.page = 0
         embed, graphic = await chel_card_payload(self.record, self.section, self.ea_summary, self.page)
-        await interaction.message.edit(embed=embed, attachments=[graphic], view=self)
+        await interaction.message.edit(embed=None, attachments=[graphic], view=self)
 
     @discord.ui.button(label='Previous stats', style=discord.ButtonStyle.secondary, row=1)
     async def previous_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -952,7 +951,7 @@ class AdvancedStatsView(discord.ui.View):
         self.page = max(0, self.page-1)
         await interaction.response.defer()
         embed, graphic = await chel_card_payload(self.record, self.section, self.ea_summary, self.page)
-        await interaction.message.edit(embed=embed, attachments=[graphic], view=self)
+        await interaction.message.edit(embed=None, attachments=[graphic], view=self)
 
     @discord.ui.button(label='Next stats', style=discord.ButtonStyle.primary, row=1)
     async def next_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -961,7 +960,7 @@ class AdvancedStatsView(discord.ui.View):
         self.page += 1
         await interaction.response.defer()
         embed, graphic = await chel_card_payload(self.record, self.section, self.ea_summary, self.page)
-        await interaction.message.edit(embed=embed, attachments=[graphic], view=self)
+        await interaction.message.edit(embed=None, attachments=[graphic], view=self)
 
 
 async def autocomplete_capital_players(interaction: discord.Interaction,current:str):
@@ -1007,7 +1006,6 @@ async def advanced_command(interaction: discord.Interaction, player: str = '', t
             ea=ea_for_record(record,ea_history)
             embed, graphic = await chel_card_payload(record,ea_summary=ea)
             await interaction.followup.send(
-                embed=embed,
                 file=graphic,
                 view=AdvancedStatsView(record, interaction.user.id, ea_summary=ea),
                 allowed_mentions=discord.AllowedMentions.none(),
