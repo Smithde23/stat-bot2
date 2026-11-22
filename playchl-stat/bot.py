@@ -1236,6 +1236,28 @@ def award_lines(rows, heading):
         lines.append(f"#{r['RANK']} {r['PLAYER']} ({r['TEAM']}) — {r['SCORE']}")
     return lines
 
+def award_card_groups(rows):
+    """One trophy per group; never mix award categories on an image."""
+    grouped={}
+    for row in rows:
+        key=(row['CATEGORY'],row['TROPHY'])
+        grouped.setdefault(key,[]).append(row)
+    return grouped
+
+async def send_award_cards(destination,rows):
+    """Post each trophy as its own colorful image card, paging long lists."""
+    for (category,trophy),candidates in award_card_groups(rows).items():
+        title=f'{trophy} | {category}'
+        lines=[f"#{r['RANK']}  {r['PLAYER']}  ({r['TEAM']})  —  {r['SCORE']}"
+               for r in candidates]
+        total=max(1,(len(lines)+5)//6)
+        for page in range(total):
+            graphic=await asyncio.to_thread(
+                stat_report_card_bytes,title,lines[page*6:(page+1)*6],page+1,total)
+            await destination.send(
+                file=discord.File(graphic,filename=f'award_{page+1}.png'),
+                allowed_mentions=discord.AllowedMentions.none())
+
 @bot.tree.command(name='awards', description='Show published CHL awards race data')
 @app_commands.describe(trophy='Choose an award from the dropdown', team='Optional team abbreviation, e.g. WSH')
 @app_commands.choices(trophy=[
@@ -1259,7 +1281,7 @@ async def awards_command(interaction: discord.Interaction, trophy: app_commands.
             rows = [r for r in rows if match_team(r['TEAM'], code)]
         if not rows:
             return await interaction.followup.send('No matching award candidates found in the readable tables.', ephemeral=True)
-        await reply(interaction, award_lines(rows, 'CHL AWARDS RACE'))
+        await send_award_cards(interaction.followup, rows)
     except Exception as exc:
         log.exception('Awards race failed')
         await interaction.followup.send(f'Unable to read awards race: {exc}', ephemeral=True)
@@ -1274,8 +1296,7 @@ async def daily_awards():
     try:
         rows = await award_tables()
         channel = bot.get_channel(CHANNEL_ID) or await bot.fetch_channel(CHANNEL_ID)
-        for part in chunks(award_lines(rows, 'CHL DAILY AWARDS RACE')):
-            await channel.send('```\n' + part + '```\nSource: ' + BASE + '/awards', allowed_mentions=discord.AllowedMentions.none())
+        await send_award_cards(channel, rows)
         last_awards_date = now.date()
     except Exception:
         log.exception('Daily awards unavailable; will retry in 30 minutes')
