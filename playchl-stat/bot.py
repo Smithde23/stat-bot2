@@ -644,84 +644,89 @@ def _chel_text(draw, xy, text, font, fill, max_width=None):
     draw.text(xy, text, font=font, fill=fill)
 
 
-def chel_card_bytes(record, section='overview', ea_summary=None):
-    """Large readable card: regular, advanced, goalie, then separate EA data."""
-    identity={'PLAYER','NAME','GAMERTAG','TEAM','POS','POSITION'}
-    regular_keys=('GP','G','A','P','PTS','SH','S%','+/-','PIM','HIT','HITS','BLK','GWG','PPG','SHG')
-    goalie_keys=('SA','SV','SV%','GA','GAA','SO','DSV','BRK SA','BRK SV','BRK SV%','PS SA','PS SV','PS SV%','SO PER')
-    source=[(str(k),str(v)) for k,v in record.items()
-            if str(k).upper() not in identity and v is not None and str(v).strip()]
-    def classify(items):
-        regular=[]; advanced=[]; goalie=[]
-        for k,v in items:
-            if k in goalie_keys: goalie.append((k,v))
-            elif k in regular_keys: regular.append((k,v))
-            else: advanced.append((k,v))
-        return regular,advanced,goalie
-    regular,advanced,goalie=classify(source)
-    ea=[]
-    if ea_summary:
-        ea=[(str(k).replace('_',' ').upper(),str(v)) for k,v in ea_summary.items()
-            if k!='name' and v is not None and not isinstance(v,(dict,list,tuple))]
-    groups={
-        'overview':('REGULAR STATS','PlayCHL league totals',regular),
-        'offense':('OFFENSE','PlayCHL offensive metrics',[(k,v) for k,v in source if k in ADVANCED_SECTIONS['offense'][1]]),
-        'defense':('DEFENSE','PlayCHL defensive metrics',[(k,v) for k,v in source if k in ADVANCED_SECTIONS['defense'][1]]),
-        'goalie':('GOALTENDING','PlayCHL goalie metrics',goalie),
-        'ea':('EA SPORTS','Separate club-private match history',ea),
-        'all':('ADVANCED STATS','Other PlayCHL advanced metrics',advanced),
-    }
-    heading,subtitle,items=groups.get(section,groups['overview'])
-    W=1600
-    white='#f5f7ff'; muted='#a6b6ce'; accent='#83b9ff'
+def chel_card_bytes(record, section='overview', ea_summary=None, page=0):
+    """Landscape stat card optimized for Discord mobile image preview."""
+    W,H=1400,770
+    im=Image.new('RGB',(W,H),'#080f1c')
+    d=ImageDraw.Draw(im)
+    white='#f6f8ff'; muted='#aab8cb'; accent='#78b6ff'
+    def rect(x1,y1,x2,y2,color,r=17):
+        d.rounded_rectangle((x1,y1,x2,y2),radius=r,fill=color)
+    def label(x,y,value,size=26,color=white,bold=False,maxw=None):
+        value=str(value); original=value; font=_chel_font(size,bold)
+        if maxw:
+            while len(value)>1 and d.textbbox((0,0),value,font=font)[2]>maxw:
+                value=value[:-1]
+            if value!=original:value=value[:-1]+'…'
+        d.text((x,y),value,font=font,fill=color)
     def stat(*keys):
-        for k in keys:
-            v=record.get(k)
+        for key in keys:
+            v=record.get(key)
             if v is not None and str(v).strip():return str(v)
         return '—'
-    rows=max(1,(len(items)+1)//2)
-    H=530+rows*76
-    im=Image.new('RGB',(W,H),'#0b1120')
-    d=ImageDraw.Draw(im)
-    def box(coords,fill,r=20):d.rounded_rectangle(coords,radius=r,fill=fill)
-    def label(x,y,val,size=24,color=white,bold=False,width=None):
-        val=str(val); font=_chel_font(size,bold); original=val
-        if width:
-            while len(val)>1 and d.textbbox((0,0),val,font=font)[2]>width:val=val[:-1]
-            if val!=original:val=val[:-1]+'…'
-        d.text((x,y),val,font=font,fill=color)
-    box((36,32,W-36,232),'#192940',28)
-    label(68,54,'PLAYCHL  /  PLAYER REPORT',25,accent,True)
-    label(68,103,stat('PLAYER','NAME','GAMERTAG'),52,white,True,1040)
-    label(70,180,stat('TEAM'),28,muted,True,1050)
-    label(1305,111,'GP  '+stat('GP'),38,white,True,230)
-    quick=[('GOALS',stat('G')),('ASSISTS',stat('A')),('POINTS',stat('P','PTS')),
-           ('SHOTS',stat('SH')),('SV%',stat('SV%')),('GAA',stat('GAA'))]
-    for i,(key,val) in enumerate(quick):
-        x=36+i*257
-        box((x,250,x+247,389),'#20334e',18)
-        label(x+20,268,key,22,muted,True)
-        label(x+20,306,val,48,white,True,206)
-    y=410
-    height=100+rows*76
-    box((36,y,W-36,y+height),'#16243a',22)
-    label(66,y+18,heading,34,white,True)
-    label(68,y+64,subtitle,23,muted)
-    if not items:label(68,y+119,'No verified statistics available',28,muted)
-    for i,(key,val) in enumerate(items):
-        col=i%2; row=i//2; x=65+col*760; yy=y+104+row*76
-        box((x,yy,x+735,yy+67),'#233650',12)
-        label(x+19,yy+18,key,26,muted,True,450)
-        label(x+520,yy+12,val,35,white,True,190)
-    label(58,H-35,'Source: '+('EA club-private matches' if section=='ea' else 'PlayCHL league statistics'),22,muted)
+    identity={'PLAYER','NAME','GAMERTAG','TEAM','POS','POSITION'}
+    regular={'GP','G','A','P','PTS','SH','S%','+/-','PIM','HIT','HITS','BLK','GWG','PPG','SHG'}
+    goalie={'SA','SV','SV%','GA','GAA','SO','DSV','BRK SA','BRK SV','BRK SV%','PS SA','PS SV','PS SV%','SO PER'}
+    all_items=[(str(k),str(v)) for k,v in record.items()
+               if str(k).upper() not in identity and v is not None and str(v).strip()]
+    ea_items=[(str(k).replace('_',' ').upper(),str(v)) for k,v in (ea_summary or {}).items()
+              if k!='name' and v is not None and not isinstance(v,(dict,list,tuple))]
+    groups={
+        'overview':('REGULAR STATS',[(k,v) for k,v in all_items if k in regular]),
+        'offense':('OFFENSE',[(k,v) for k,v in all_items if k in ADVANCED_SECTIONS['offense'][1]]),
+        'defense':('DEFENSE',[(k,v) for k,v in all_items if k in ADVANCED_SECTIONS['defense'][1]]),
+        'goalie':('GOALTENDING',[(k,v) for k,v in all_items if k in goalie]),
+        'all':('ADVANCED STATS',[(k,v) for k,v in all_items if k not in regular and k not in goalie]),
+        'ea':('EA SPORTS',ea_items),
+    }
+    title,items=groups.get(section,groups['overview'])
+    page=max(0,int(page))
+    pages=max(1,(len(items)+11)//12)
+    page=min(page,pages-1)
+    shown=items[page*12:(page+1)*12]
+    # Card header
+    rect(24,24,1376,194,'#17263b',24)
+    rect(44,41,191,77,'#335f9c',16)
+    label(61,47,'PLAYCHL',21,white,True)
+    label(48,90,stat('PLAYER','NAME','GAMERTAG'),49,white,True,880)
+    label(51,151,stat('TEAM'),25,muted,True,860)
+    label(1140,79,'GP',23,muted,True)
+    label(1140,109,stat('GP'),55,white,True,200)
+    # Six large top-level metrics.
+    if section=='goalie':
+        featured=[('GAMES',stat('GP')),('SAVES',stat('SV')),('SAVE %',stat('SV%')),
+                  ('GAA',stat('GAA')),('SHUTOUTS',stat('SO')),('GOALS AGAINST',stat('GA'))]
+    elif section=='ea':
+        featured=[(k,v) for k,v in ea_items[:6]]
+    else:
+        featured=[('GAMES',stat('GP')),('GOALS',stat('G')),('ASSISTS',stat('A')),
+                  ('POINTS',stat('P','PTS')),('SHOTS',stat('SH')),('HITS',stat('HIT','HITS'))]
+    for i,(k,v) in enumerate(featured[:6]):
+        x=24+i*228
+        rect(x,211,x+218,337,'#1d3049',17)
+        label(x+15,226,k,20,muted,True,183)
+        label(x+15,263,v,43,white,True,185)
+    # Compact detail panel, at most 12 items per image.
+    rect(24,353,1376,719,'#152338',21)
+    label(46,368,title,29,white,True)
+    label(1165,370,f'{page+1} / {pages}',22,accent,True)
+    if not shown:
+        label(49,465,'No verified statistics available for this category',27,muted)
+    for i,(key,val) in enumerate(shown):
+        col=i%4; row=i//4
+        x=45+col*332; y=419+row*92
+        rect(x,y,x+320,y+82,'#22344c',12)
+        label(x+13,y+11,key,20,muted,True,289)
+        label(x+13,y+37,val,33,white,True,286)
+    label(34,735,'EA club-private history' if section=='ea' else 'PlayCHL league statistics',19,muted)
     out=io.BytesIO()
     im.save(out,format='PNG',optimize=True)
     out.seek(0)
     return out
 
-async def chel_card_payload(record, section='overview', ea_summary=None):
-    png = await asyncio.to_thread(chel_card_bytes, record, section, ea_summary)
-    embed = advanced_embed(record, section, ea_summary)
+async def chel_card_payload(record, section='overview', ea_summary=None, page=0):
+    png = await asyncio.to_thread(chel_card_bytes, record, section, ea_summary, page)
+    embed = discord.Embed(color=discord.Color.from_rgb(23,38,59))
     embed.set_image(url='attachment://chel_player_card.png')
     return embed, discord.File(png, filename='chel_player_card.png')
 
@@ -914,6 +919,8 @@ class AdvancedStatsView(discord.ui.View):
         self.record = record
         self.owner_id = owner_id
         self.ea_summary = ea_summary
+        self.section = 'overview'
+        self.page = 0
 
     @discord.ui.select(
         placeholder='Choose a statistics category…',
@@ -931,7 +938,27 @@ class AdvancedStatsView(discord.ui.View):
             return await interaction.response.send_message(
                 'Run /advance yourself to browse statistics.', ephemeral=True)
         await interaction.response.defer()
-        embed, graphic = await chel_card_payload(self.record, select.values[0], self.ea_summary)
+        self.section = select.values[0]
+        self.page = 0
+        embed, graphic = await chel_card_payload(self.record, self.section, self.ea_summary, self.page)
+        await interaction.message.edit(embed=embed, attachments=[graphic], view=self)
+
+    @discord.ui.button(label='Previous stats', style=discord.ButtonStyle.secondary, row=1)
+    async def previous_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.owner_id:
+            return await interaction.response.send_message('Run /advance to browse stats.', ephemeral=True)
+        self.page = max(0, self.page-1)
+        await interaction.response.defer()
+        embed, graphic = await chel_card_payload(self.record, self.section, self.ea_summary, self.page)
+        await interaction.message.edit(embed=embed, attachments=[graphic], view=self)
+
+    @discord.ui.button(label='Next stats', style=discord.ButtonStyle.primary, row=1)
+    async def next_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.owner_id:
+            return await interaction.response.send_message('Run /advance to browse stats.', ephemeral=True)
+        self.page += 1
+        await interaction.response.defer()
+        embed, graphic = await chel_card_payload(self.record, self.section, self.ea_summary, self.page)
         await interaction.message.edit(embed=embed, attachments=[graphic], view=self)
 
 
