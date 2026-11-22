@@ -647,9 +647,9 @@ def _chel_text(draw, xy, text, font, fill, max_width=None):
 def chel_card_bytes(record, section='overview', ea_summary=None, page=0):
     """Landscape stat card optimized for Discord mobile image preview."""
     W,H=900,550
-    im=Image.new('RGB',(W,H),'#080f1c')
+    im=Image.new('RGB',(W,H),'#050608')
     d=ImageDraw.Draw(im)
-    white='#f6f8ff'; muted='#aab8cb'; accent='#78b6ff'
+    white='#ffffff'; muted='#ffffff'; accent='#4db8ff'
     def rect(x1,y1,x2,y2,color,r=17):
         d.rounded_rectangle((x1,y1,x2,y2),radius=r,fill=color)
     def label(x,y,value,size=26,color=white,bold=False,maxw=None):
@@ -684,14 +684,15 @@ def chel_card_bytes(record, section='overview', ea_summary=None, page=0):
     pages=max(1,(len(items)+3)//4)
     page=min(page,pages-1)
     shown=items[page*4:(page+1)*4]
-    # Compact mobile-first composition; larger type instead of more pixels.
-    rect(8,8,892,114,'#17263b',16)
-    rect(20,18,142,48,'#335f9c',11)
-    label(33,23,'PLAYCHL',19,white,True)
-    label(23,51,stat('PLAYER','NAME','GAMERTAG'),43,white,True,650)
-    label(26,94,stat('TEAM'),18,muted,True,650)
-    label(789,20,'GAMES',18,muted,True)
-    label(791,48,stat('GP'),47,white,True,90)
+    # High-contrast black card with large, bold mobile-readable typography.
+    rect(6,6,894,140,'#10151e',18)
+    rect(19,18,166,52,'#1769d2',12)
+    label(33,23,'PLAYCHL',23,white,True)
+    label(22,59,stat('PLAYER','NAME','GAMERTAG'),54,white,True,690)
+    label(25,117,stat('TEAM'),22,'#6ac5ff',True,680)
+    rect(757,17,883,130,'#192d48',13)
+    label(775,27,'GAMES',21,white,True)
+    label(776,61,stat('GP'),54,white,True,103)
     if section=='goalie':
         featured=[('GAMES',stat('GP')),('SAVES',stat('SV')),('SAVE %',stat('SV%')),
                   ('GAA',stat('GAA')),('SHUTOUTS',stat('SO')),('GOALS AGAINST',stat('GA'))]
@@ -700,24 +701,26 @@ def chel_card_bytes(record, section='overview', ea_summary=None, page=0):
     else:
         featured=[('GAMES',stat('GP')),('GOALS',stat('G')),('ASSISTS',stat('A')),
                   ('POINTS',stat('P','PTS')),('SHOTS',stat('SH')),('HITS',stat('HIT','HITS'))]
+    tile_colors=['#143c5b','#164c43','#3d285d','#523622','#173e51','#45304e']
     for i,(k,v) in enumerate(featured[:6]):
         col=i%3; row=i//3
-        x=8+col*298; y=122+row*96
-        rect(x,y,x+288,y+90,'#1d3049',12)
-        label(x+14,y+7,k,22,muted,True,256)
-        label(x+14,y+34,v,46,white,True,255)
-    rect(8,321,892,531,'#152338',16)
-    label(23,331,title,29,white,True)
-    label(773,332,f'{page+1} / {pages}',23,accent,True)
+        x=6+col*299; y=148+row*96
+        rect(x,y,x+289,y+90,tile_colors[i],13)
+        label(x+14,y+7,k,24,white,True,257)
+        label(x+14,y+34,v,52,white,True,258)
+    rect(6,345,894,533,'#101820',16)
+    rect(17,354,28,380,'#2c9dff',4)
+    label(39,351,title,32,white,True,650)
+    label(770,357,f'{page+1} / {pages}',24,'#66c5ff',True)
     if not shown:
-        label(24,416,'No verified stats available',29,muted)
+        label(26,438,'No verified stats available',31,white,True)
     for i,(key,val) in enumerate(shown):
         col=i%2; row=i//2
-        x=22+col*438; y=375+row*75
-        rect(x,y,x+424,y+69,'#22344c',11)
-        label(x+13,y+6,key,21,muted,True,392)
-        label(x+13,y+29,val,35,white,True,389)
-    label(16,534,'EA private matches' if section=='ea' else 'PlayCHL league statistics',13,muted)
+        x=19+col*440; y=393+row*68
+        rect(x,y,x+423,y+62,('#1b2c40' if col==0 else '#243044'),10)
+        label(x+12,y+5,key,22,white,True,394)
+        label(x+12,y+27,val,36,white,True,395)
+    label(17,536,'EA PRIVATE MATCHES' if section=='ea' else 'PLAYCHL LEAGUE STATS',14,'#6ac5ff',True)
     out=io.BytesIO()
     im.save(out,format='PNG',optimize=True)
     out.seek(0)
