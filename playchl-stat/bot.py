@@ -631,7 +631,12 @@ def _chel_font(size, bold=True):
             return ImageFont.truetype(path, size)
         except OSError:
             pass
-    return ImageFont.load_default()
+    # Pillow 10+ ships a scalable embedded font. Preserve the requested
+    # point size when system fonts are missing in Railway's slim container.
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def _chel_text(draw, xy, text, font, fill, max_width=None):
@@ -685,7 +690,7 @@ def chel_card_bytes(record, section='overview', ea_summary=None, page=0):
     page=min(page,pages-1)
     shown=items[page*4:(page+1)*4]
     # High-contrast black card with large, bold mobile-readable typography.
-    rect(6,6,894,140,'#10151e',18)
+    rect(0,0,900,140,'#10151e',12)
     rect(19,18,166,52,'#1769d2',12)
     label(33,23,'PLAYCHL',23,white,True)
     label(22,59,stat('PLAYER','NAME','GAMERTAG'),54,white,True,690)
@@ -704,11 +709,11 @@ def chel_card_bytes(record, section='overview', ea_summary=None, page=0):
     tile_colors=['#143c5b','#164c43','#3d285d','#523622','#173e51','#45304e']
     for i,(k,v) in enumerate(featured[:6]):
         col=i%3; row=i//3
-        x=6+col*299; y=148+row*96
-        rect(x,y,x+289,y+90,tile_colors[i],13)
-        label(x+14,y+7,k,24,white,True,257)
-        label(x+14,y+34,v,52,white,True,258)
-    rect(6,345,894,533,'#101820',16)
+        x=2+col*300; y=145+row*98
+        rect(x,y,x+296,y+94,tile_colors[i],11)
+        label(x+13,y+7,k,24,white,True,265)
+        label(x+13,y+32,v,52,white,True,265)
+    rect(0,345,900,540,'#101820',12)
     rect(17,354,28,380,'#2c9dff',4)
     label(39,351,title,32,white,True,650)
     label(770,357,f'{page+1} / {pages}',24,'#66c5ff',True)
