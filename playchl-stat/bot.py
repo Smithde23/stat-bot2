@@ -199,10 +199,52 @@ class CHLBot(commands.Bot):
 
 bot=CHLBot(command_prefix='!', intents=discord.Intents.default())
 
+def stat_report_card_bytes(title, rows, page, total):
+    """Reusable black/colorful Discord report card for table and game commands."""
+    W,H=900,550
+    im=Image.new('RGB',(W,H),'#050608')
+    draw=ImageDraw.Draw(im)
+    def font(sz):
+        return _chel_font(sz,True)
+    def fit(value,sz,maxw):
+        value=str(value)
+        f=font(sz)
+        while len(value)>2 and draw.textbbox((0,0),value,font=f)[2]>maxw:
+            value=value[:-2]+'…'
+        return value
+    draw.rounded_rectangle((0,0,899,105),radius=14,fill='#10151e')
+    draw.rounded_rectangle((16,12,183,46),radius=10,fill='#1769d2')
+    draw.text((30,17),'PLAYCHL',font=font(24),fill='white')
+    draw.text((20,51),fit(title,43,760),font=font(43),fill='white')
+    colors=['#143c5b','#164c43','#3d285d','#523622','#173e51','#45304e']
+    for i,row in enumerate(rows[:6]):
+        y=116+i*69
+        draw.rounded_rectangle((12,y,888,y+62),radius=10,fill=colors[i%len(colors)])
+        # Keep complete stats accessible through subsequent cards.
+        draw.text((25,y+13),fit(row,25,840),font=font(25),fill='white')
+    draw.text((19,530),f'PLAYCHL STATS  •  CARD {page}/{total}',font=font(15),fill='#6ac5ff')
+    output=io.BytesIO()
+    im.save(output,format='PNG',optimize=True)
+    output.seek(0)
+    return output
+
+async def send_stat_report_cards(interaction, lines, title=None):
+    """Render all published rows as readable image attachments, six per card."""
+    lines=[str(line).strip() for line in lines if str(line).strip()]
+    if not lines:
+        return await interaction.followup.send('No published statistics available.')
+    heading=title or lines[0]
+    if not title:
+        lines=lines[1:] or [heading]
+    total=(len(lines)+5)//6
+    for page in range(total):
+        image=await asyncio.to_thread(stat_report_card_bytes,heading,lines[page*6:(page+1)*6],page+1,total)
+        await interaction.followup.send(
+            file=discord.File(image,filename=f'playchl_stats_{page+1}.png'),
+            allowed_mentions=discord.AllowedMentions.none())
+
 async def reply(interaction, lines):
-    parts=chunks(lines)
-    for i, part in enumerate(parts):
-        await interaction.followup.send('```\n'+part+'```', ephemeral=False)
+    await send_stat_report_cards(interaction,lines)
 
 @bot.tree.command(name='standings',description='Show standings for every CHL team')
 async def standings_command(interaction:discord.Interaction):
@@ -1352,9 +1394,7 @@ class EASelectView(StatMenuBase):
         match=self.matches[int(interaction.data["values"][0])]
         await interaction.response.defer(thinking=True)
         lines=ea_game_report_lines(self.matches,match["id"])
-        for part in chunks(lines):
-            await interaction.followup.send(chr(96)*3+"\n"+part+chr(96)*3,
-                                            allowed_mentions=discord.AllowedMentions.none())
+        await send_stat_report_cards(interaction,lines,title='EA GAME REPORT')
 
 class PlayCHLSelectView(StatMenuBase):
     def __init__(self,owner_id,rows):
@@ -1387,10 +1427,7 @@ class PlayCHLSelectView(StatMenuBase):
         except Exception as exc:
             log.warning("PlayCHL game detail extraction unavailable: %s",exc)
             report=playchl_fallback_lines(row)
-        for part in chunks(report):
-            await interaction.followup.send(
-                "PLAYCHL STATS\n"+chr(96)*3+"\n"+part+chr(96)*3,
-                allowed_mentions=discord.AllowedMentions.none())
+        await send_stat_report_cards(interaction,report,title='PLAYCHL GAME REPORT')
 
 class StatSourceView(StatMenuBase):
     def __init__(self,owner_id):
