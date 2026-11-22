@@ -665,9 +665,20 @@ def chel_card_bytes(record, section='overview', ea_summary=None, page=0):
             if value!=original:value=value[:-1]+'…'
         d.text((x,y),value,font=font,fill=color)
     def stat(*keys):
+        # Treat placeholder values as missing so P='-' cannot mask PTS.
         for key in keys:
             v=record.get(key)
-            if v is not None and str(v).strip():return str(v)
+            if v is not None and str(v).strip() not in ('', '-', '—', 'N/A', 'None'):
+                return str(v).strip()
+        # Hockey skater points are goals plus assists. Only calculate when
+        # neither published points field contains a usable value.
+        if 'P' in keys or 'PTS' in keys:
+            try:
+                goals=stat('G'); assists=stat('A')
+                if goals!='—' and assists!='—':
+                    return str(int(goals.replace(',',''))+int(assists.replace(',','')))
+            except (ValueError, TypeError):
+                pass
         return '—'
     identity={'PLAYER','NAME','GAMERTAG','TEAM','POS','POSITION'}
     regular={'GP','G','A','P','PTS','SH','S%','+/-','PIM','HIT','HITS','BLK','GWG','PPG','SHG'}
@@ -685,6 +696,13 @@ def chel_card_bytes(record, section='overview', ea_summary=None, page=0):
         'ea':('EA SPORTS',ea_items),
     }
     title,items=groups.get(section,groups['overview'])
+    # Keep the regular stats grid consistent with the headline points tile.
+    if section in ('overview','offense'):
+        points=stat('P','PTS')
+        if points!='—':
+            items=[(k,points if k in ('P','PTS') else v) for k,v in items]
+            if not any(k in ('P','PTS') for k,v in items):
+                items.append(('P',points))
     page=max(0,int(page))
     pages=max(1,(len(items)+3)//4)
     page=min(page,pages-1)
