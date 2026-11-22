@@ -643,87 +643,77 @@ def _chel_text(draw, xy, text, font, fill, max_width=None):
 
 
 def chel_card_bytes(record, section='overview', ea_summary=None):
-    """Compact dashboard modeled on the supplied Rink Rivals card layout."""
-    W,H=1140,690
-    im=Image.new('RGB',(W,H),'#090e1a')
+    """Professional dual-source stat dashboard; all available source fields."""
+    identity={'PLAYER','NAME','GAMERTAG','TEAM','POS','POSITION'}
+    league=[(str(k),str(v)) for k,v in record.items()
+            if str(k).upper() not in identity and v is not None and str(v).strip()]
+    if section not in ('overview','all'):
+        wanted=set(ADVANCED_SECTIONS.get(section,('All',()))[1])
+        league=[(k,v) for k,v in league if k in wanted]
+    ea=[]
+    if ea_summary:
+        for key,value_ in ea_summary.items():
+            if key not in ('name',) and value_ is not None and not isinstance(value_,(dict,list,tuple)):
+                ea.append((key.replace('_',' ').upper(),str(value_)))
+    W=1200
+    nrows=max((len(league)+1)//2,(len(ea)+1)//2,1)
+    # Two independent panels: league and EA never blended or summed.
+    league_rows=(len(league)+1)//2
+    ea_rows=(len(ea)+1)//2
+    H=max(700,390+league_rows*49+130+ea_rows*49+85)
+    im=Image.new('RGB',(W,H),'#090f1d')
     d=ImageDraw.Draw(im)
-    white='#f2f5fc'; muted='#8d99b0'; blue='#92b8ff'
-    panel='#131e2f'; tile='#192538'; purple='#b77cf1'
-    def box(x0,y0,x1,y1,fill,r=19):
-        d.rounded_rectangle((x0,y0,x1,y1),radius=r,fill=fill)
-    def txt(x,y,value,size=20,color=white,bold=False,maxwidth=None):
-        value=str(value)
+    white='#f3f6fc'; muted='#9aa8bc'; accent='#88b8ff'
+    def rr(coords,fill,r=14):
+        d.rounded_rectangle(coords,radius=r,fill=fill)
+    def tx(x,y,val,size=18,color=white,bold=False,maxwidth=None):
+        val=str(val)
         font=_chel_font(size,bold)
         if maxwidth:
-            while len(value)>2 and d.textbbox((0,0),value,font=font)[2]>maxwidth:
-                value=value[:-2]
-            if value!=str(value): value+='…'
-        d.text((x,y),value,font=font,fill=color)
+            original=val
+            while len(val)>1 and d.textbbox((0,0),val,font=font)[2]>maxwidth:
+                val=val[:-1]
+            if val!=original:val=val[:-1]+'…'
+        d.text((x,y),val,font=font,fill=color)
     def stat(*keys):
         for key in keys:
-            v=record.get(key)
-            if v is not None and str(v).strip() not in ('','-','N/A','None'):
-                return str(v).strip()
+            val=record.get(key)
+            if val is not None and str(val).strip():return str(val)
         return '—'
-    def row(y,values):
-        box(50,y,1090,y+42,panel if (y//42)%2 else '#192538',3)
-        for i,v in enumerate(values):
-            txt(68+i*170,y+10,v,18,white if i else muted,i>0,maxwidth=155)
-    name=stat('PLAYER','NAME','GAMERTAG')
-    team=stat('TEAM')
-    position=stat('POS','POSITION').upper()
-    goalie=position in ('G','GOALIE','GK')
-    badge='G' if goalie else (position[:1] if position!='—' else 'P')
-    d.line((56,57,1084,57),fill='#263248',width=2)
-    box(47,30,188,65,'#26365c',18)
-    txt(66,39,'Career stats' if section=='overview' else 'Advanced stats',17,blue,True)
-    txt(1000,36,'PLAYCHL',17,muted,True)
-    box(45,90,380,350,'#182238',25)
-    d.ellipse((151,115,275,239),fill=purple)
-    txt(187,141,badge,60,'#101524',True)
-    txt(106,272,'PLAYER PROFILE',22,white,True)
-    box(394,90,1095,190,panel,23)
-    txt(422,113,name,34,white,True,maxwidth=450)
-    txt(423,159,team,18,purple,True)
-    txt(988,104,stat('GP'),45,white,True)
-    txt(985,160,'Games played',15,muted)
-    box(394,202,1095,350,panel,23)
-    txt(420,220,'Positions',19,white,True)
-    colors=['#ee6677','#31c988','#44c8e5','#f8c940',purple]
-    for i,(p,c) in enumerate(zip(('C','LW','RW','D','G'),colors)):
-        x=422+i*133
-        box(x,268,x+110,278,'#2b3548',4)
-        active=position==p or (p=='G' and goalie)
-        if active: box(x,268,x+110,278,c,4)
-        box(x,289,x+33,311,c,10)
-        txt(x+8,291,p,14,'#101524',True)
-        txt(x+43,288,'1' if active else '—',19,muted,True)
-    box(45,363,1095,467,'#0e1727',16)
-    regular=[('Goals',stat('G')),('Assists',stat('A')),('Points',stat('P','PTS')),
-             ('+/-',stat('+/-')),('Hits',stat('HIT','HITS')),('PIM',stat('PIM'))]
-    for i,(label,value) in enumerate(regular):
-        x=49+i*175
-        box(x,367,x+168,463,tile,14)
-        txt(x+13,379,label,16,muted)
-        txt(x+13,409,value,36,'#f4788a' if value.startswith('-') else blue,True,maxwidth=143)
-    box(45,480,1095,627,panel,21)
-    txt(65,494,'Goalie' if section in ('overview','goalie') else ADVANCED_SECTIONS.get(section,('Advanced',))[0],19,white,True)
-    if section in ('overview','goalie'):
-        detail=[('Games',stat('GP') if goalie else '—'),('GAA',stat('GAA')),
-                ('SV%',stat('SV%')),('GA',stat('GA')),('Saves',stat('SV')),
-                ('Shutouts',stat('SO'))]
-    else:
-        wanted=ADVANCED_SECTIONS.get(section,ADVANCED_SECTIONS['overview'])[1] if section!='all' else tuple(record.keys())
-        detail=[(key,str(record[key])) for key in wanted if key in record and key.upper() not in ADVANCED_IDENTITY and str(record[key]).strip()][:6]
-        detail=(detail+[('—','—')]*6)[:6]
-    for i,(key,val) in enumerate(detail):
-        x=65+i*169
-        if i:d.line((x-9,537,x-9,607),fill='#293449',width=2)
-        txt(x,543,key,16,muted)
-        txt(x,573,val,27,white,True,maxwidth=145)
-    if ea_summary:
-        txt(60,639,'EA private matches: '+str(ea_summary.get('matches','—'))+' (separate source)',14,muted)
-    txt(870,650,'playchl.com',16,muted)
+    rr((30,30,W-30,210),'#16243a',24)
+    rr((50,50,195,83),'#304b76',16)
+    tx(69,56,'PLAYER REPORT',16,white,True)
+    tx(53,104,stat('PLAYER','NAME','GAMERTAG'),40,white,True,760)
+    tx(55,164,stat('TEAM'),21,accent,True,760)
+    tx(975,106,'GP  '+stat('GP'),26,white,True)
+    tx(975,164,'PLAYCHL  /  EA',16,muted,True)
+    quick=[('GOALS',stat('G')),('ASSISTS',stat('A')),('POINTS',stat('P','PTS')),
+           ('SHOTS',stat('SH')),('SV%',stat('SV%')),('GAA',stat('GAA'))]
+    for i,(key,val) in enumerate(quick):
+        x=30+i*193
+        rr((x,228,x+183,318),'#1b2a40',15)
+        tx(x+14,242,key,15,muted,True)
+        tx(x+14,267,val,29,white,True,153)
+    def panel(y,title,subtitle,items):
+        rows=(len(items)+1)//2
+        height=92+max(1,rows)*49
+        rr((30,y,1170,y+height),'#142136',20)
+        tx(52,y+16,title,23,white,True)
+        tx(52,y+48,subtitle,15,muted)
+        if not items:
+            tx(54,y+102,'No verified statistics available from this source',18,muted)
+        for i,(key,val) in enumerate(items):
+            col=i%2; row=i//2
+            x=52+col*557; yy=y+88+row*49
+            rr((x,yy,x+540,yy+42),'#202f46',9)
+            tx(x+14,yy+10,key,15,muted,True,330)
+            tx(x+397,yy+7,val,19,white,True,127)
+        return y+height
+    title=ADVANCED_SECTIONS.get(section,('All available statistics',))[0] if section not in ('overview','all') else 'All available statistics'
+    next_y=panel(340,'PLAYCHL  |  '+title,'Published league statistics • original values',league)
+    next_y=panel(next_y+18,'EA SPORTS  |  CLUB-PRIVATE MATCHES',
+                 'Separate fetched history • may not cover the full season',ea)
+    tx(48,next_y+22,'SOURCE INTEGRITY  •  EA and PlayCHL figures are displayed separately, never added together.',15,muted)
     out=io.BytesIO()
     im.save(out,format='PNG',optimize=True)
     out.seek(0)
